@@ -154,6 +154,7 @@ check_health "Prometheus" "http://localhost:9090/-/healthy"
 check_health "Loki" "http://localhost:3100/ready"
 check_health "OTel Collector" "http://localhost:13133/health"
 check_health "Grafana" "http://localhost:3000/api/health"
+check_health "Node Exporter" "http://localhost:9100/metrics"
 
 echo ""
 if [ "$services_healthy" = true ]; then

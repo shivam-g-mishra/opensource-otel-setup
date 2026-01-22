@@ -47,6 +47,7 @@ check_service "Grafana" "http://localhost:${GRAFANA_PORT:-3000}/api/health"
 check_service "Prometheus" "http://localhost:${PROMETHEUS_PORT:-9090}/-/healthy"
 check_service "Loki" "http://localhost:${LOKI_PORT:-3100}/ready"
 check_service "OTel Collector" "http://localhost:13133/health"
+check_service "Node Exporter" "http://localhost:9100/metrics"
 
 # Check if Seq is running
 if docker ps --format '{{.Names}}' | grep -q 'otel-seq'; then

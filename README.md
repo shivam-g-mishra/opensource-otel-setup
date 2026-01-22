@@ -24,7 +24,8 @@ make up
 |---------|-----|---------|
 | **Grafana** | http://localhost:3000 | Dashboards (admin/admin) |
 | **Jaeger** | http://localhost:16686 | Trace explorer |
-| **Prometheus** | http://localhost:9090 | Metrics |
+| **Prometheus** | http://localhost:9090 | Metrics & alerts |
+| **Node Exporter** | http://localhost:9100 | Host metrics |
 
 ## Connect Your Application
 
@@ -151,7 +152,7 @@ This stack is built for production reliability:
 | **Graceful Shutdown** | Zero data loss during deployments |
 | **Retry Policies** | Exponential backoff for transient failures |
 | **Automated Backups** | Scripts for backup and restore |
-| **Self-Monitoring** | 20+ alerting rules included |
+| **Self-Monitoring** | 30+ alerting rules included |
 
 ### Backup & Restore
 
@@ -206,6 +207,7 @@ cp env.example .env
 | Jaeger | 2 cores | 4 GB |
 | Loki | 1 core | 2 GB |
 | Grafana | 1 core | 1 GB |
+| Node Exporter | 0.5 cores | 256 MB |
 
 ## Architecture
 
@@ -242,12 +244,13 @@ Grafana includes auto-provisioned dashboards:
 
 ## Alerting
 
-20+ pre-configured alerts monitor the stack:
+30+ pre-configured alerts monitor the stack and infrastructure:
 
 - **Collector alerts**: Down, high memory, queue filling, dropping data
 - **Prometheus alerts**: Down, high memory, storage filling
 - **Loki alerts**: Down, ingestion errors
 - **Jaeger alerts**: Down, storage high
+- **Infrastructure alerts**: Disk usage, memory usage, CPU, network, clock skew
 
 View alerts: `make alerts` or visit http://localhost:9090/alerts
 
@@ -282,6 +285,7 @@ opensource-otel-setup/
 | Collector debug | http://localhost:55679/debug/tracez |
 | Prometheus targets | http://localhost:9090/targets |
 | Prometheus alerts | http://localhost:9090/alerts |
+| Node Exporter metrics | http://localhost:9100/metrics |
 
 ## Production Checklist
 

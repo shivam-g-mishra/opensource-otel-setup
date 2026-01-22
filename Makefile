@@ -119,6 +119,7 @@ _health-check:
 	@curl -sf http://localhost:9090/-/healthy > /dev/null && echo "  $(GREEN)✓$(NC) Prometheus" || echo "  $(RED)✗$(NC) Prometheus"
 	@curl -sf http://localhost:3100/ready > /dev/null && echo "  $(GREEN)✓$(NC) Loki" || echo "  $(RED)✗$(NC) Loki"
 	@curl -sf http://localhost:13133/health > /dev/null && echo "  $(GREEN)✓$(NC) OTel Collector" || echo "  $(RED)✗$(NC) OTel Collector"
+	@curl -sf http://localhost:9100/metrics > /dev/null && echo "  $(GREEN)✓$(NC) Node Exporter" || echo "  $(RED)✗$(NC) Node Exporter"
 
 ## ps: Show running containers
 ps:

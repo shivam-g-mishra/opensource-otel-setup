@@ -96,3 +96,11 @@ scrape_configs:
     static_configs:
       - targets: ['loki:3100']
     metrics_path: /metrics
+
+  # ---------------------------------------------
+  # Node Exporter - Host metrics
+  # ---------------------------------------------
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    metrics_path: /metrics
