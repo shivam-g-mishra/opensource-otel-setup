@@ -245,31 +245,31 @@ The key insight is separation of concerns. Your application code instruments its
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│                        YOUR APPLICATION CODE                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │ Go SDK   │  │ Java SDK │  │.NET SDK  │  │ Python   │  ...         │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘              │
-│       │             │             │             │                     │
-│       └─────────────┴─────────────┴─────────────┘                     │
-│                           │                                           │
-│                     OTLP Protocol                                     │
-│                    (Open Standard)                                    │
-└───────────────────────────┬───────────────────────────────────────────┘
-                            │
-                            ▼
+│                         YOUR APPLICATION CODE                         │
+│    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│    │  Go SDK  │  │ Java SDK │  │ .NET SDK │  │  Python  │  ...        │
+│    └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘             │
+│         │             │             │             │                   │
+│         └─────────────┴──────┬──────┴─────────────┘                   │
+│                              │                                        │
+│                        OTLP Protocol                                  │
+│                       (Open Standard)                                 │
+└──────────────────────────────┬────────────────────────────────────────┘
+                               │
+                               ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                    OPENTELEMETRY COLLECTOR                            │
-│            Receive → Process → Export (your choice)                   │
-└───────────────────────────┬───────────────────────────────────────────┘
-                            │
-          ┌─────────────────┼─────────────────┐
-          │                 │                 │
-          ▼                 ▼                 ▼
-     ┌─────────┐       ┌─────────┐       ┌─────────┐
-     │ Jaeger  │       │  Your   │       │ Datadog │
-     │ (Self-  │       │ Backend │       │ (If you │
-     │ hosted) │       │  Here   │       │  want)  │
-     └─────────┘       └─────────┘       └─────────┘
+│                      OPENTELEMETRY COLLECTOR                          │
+│              Receive → Process → Export (your choice)                 │
+└──────────────────────────────┬────────────────────────────────────────┘
+                               │
+             ┌─────────────────┼─────────────────┐
+             │                 │                 │
+             ▼                 ▼                 ▼
+        ┌─────────┐       ┌─────────┐       ┌─────────┐
+        │ Jaeger  │       │  Your   │       │ Datadog │
+        │ (Self-  │       │ Backend │       │ (If you │
+        │ hosted) │       │  Here   │       │  want)  │
+        └─────────┘       └─────────┘       └─────────┘
 ```
 
 ### Why This Matters for Your Team
@@ -329,40 +329,40 @@ This isn't a compromise or a "demo" setup—it's a legitimate production archite
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│                          SINGLE SERVER                                │
-│                   (Your $100-200/month VM)                            │
+│                            SINGLE SERVER                              │
+│                     (Your $100-200/month VM)                          │
 │                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────┐  │
-│  │                    Docker Compose Stack                         │  │
+│  │                     Docker Compose Stack                        │  │
 │  │                                                                 │  │
-│  │   ┌───────────────────────────────────────────────────────┐    │  │
-│  │   │              OpenTelemetry Collector                  │    │  │
-│  │   │    ┌─────────────────────────────────────────────┐   │    │  │
-│  │   │    │  • Receives OTLP from your applications     │   │    │  │
-│  │   │    │  • Queues data to disk (survives restarts)  │   │    │  │
-│  │   │    │  • Routes to appropriate backends           │   │    │  │
-│  │   │    └─────────────────────────────────────────────┘   │    │  │
-│  │   └───────────────────────────────────────────────────────┘    │  │
+│  │    ┌─────────────────────────────────────────────────────────┐  │  │
+│  │    │               OpenTelemetry Collector                   │  │  │
+│  │    │  ┌───────────────────────────────────────────────────┐  │  │  │
+│  │    │  │  • Receives OTLP from your applications           │  │  │  │
+│  │    │  │  • Queues data to disk (survives restarts)        │  │  │  │
+│  │    │  │  • Routes to appropriate backends                 │  │  │  │
+│  │    │  └───────────────────────────────────────────────────┘  │  │  │
+│  │    └─────────────────────────────────────────────────────────┘  │  │
 │  │                              │                                  │  │
-│  │              ┌───────────────┼───────────────┐                  │  │
-│  │              │               │               │                  │  │
-│  │              ▼               ▼               ▼                  │  │
-│  │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │  │
-│  │   │   Jaeger    │   │ Prometheus  │   │    Loki     │          │  │
-│  │   │  (Traces)   │   │  (Metrics)  │   │   (Logs)    │          │  │
-│  │   │             │   │             │   │             │          │  │
-│  │   │ ~50K spans/ │   │  ~1M active │   │ ~50K lines/ │          │  │
-│  │   │   second    │   │   series    │   │   second    │          │  │
-│  │   └─────────────┘   └─────────────┘   └─────────────┘          │  │
-│  │              │               │               │                  │  │
-│  │              └───────────────┼───────────────┘                  │  │
+│  │            ┌─────────────────┼─────────────────┐                │  │
+│  │            │                 │                 │                │  │
+│  │            ▼                 ▼                 ▼                │  │
+│  │    ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │  │
+│  │    │   Jaeger    │   │ Prometheus  │   │    Loki     │          │  │
+│  │    │  (Traces)   │   │  (Metrics)  │   │   (Logs)    │          │  │
+│  │    │             │   │             │   │             │          │  │
+│  │    │ ~50K spans/ │   │  ~1M active │   │ ~50K lines/ │          │  │
+│  │    │   second    │   │   series    │   │   second    │          │  │
+│  │    └─────────────┘   └─────────────┘   └─────────────┘          │  │
+│  │            │                 │                 │                │  │
+│  │            └─────────────────┼─────────────────┘                │  │
 │  │                              │                                  │  │
 │  │                              ▼                                  │  │
-│  │                     ┌─────────────┐                             │  │
-│  │                     │   Grafana   │                             │  │
-│  │                     │ Dashboards  │                             │  │
-│  │                     │  Alerting   │                             │  │
-│  │                     └─────────────┘                             │  │
+│  │                      ┌─────────────┐                            │  │
+│  │                      │   Grafana   │                            │  │
+│  │                      │ Dashboards  │                            │  │
+│  │                      │  Alerting   │                            │  │
+│  │                      └─────────────┘                            │  │
 │  │                                                                 │  │
 │  └─────────────────────────────────────────────────────────────────┘  │
 │                                                                       │
@@ -481,127 +481,129 @@ Now let's unpack each layer.
 Here's the complete picture:
 
 ```
-                              YOUR APPLICATIONS
-                    (Instrumented with OpenTelemetry SDKs)
-                                    │
-                                    │ OTLP Protocol
-                                    ▼
-    ┌───────────────────────────────────────────────────────────────────┐
-    │                     LAYER 1: INGESTION                            │
-    │                                                                   │
-    │    ┌─────────────────┐                                            │
-    │    │  Load Balancer  │  HAProxy, NGINX, or cloud LB               │
-    │    │   (Port 4317)   │  Health-aware routing                      │
-    │    └────────┬────────┘                                            │
-    │             │                                                     │
-    │    ┌────────┼────────┬────────────────┐                           │
-    │    │        │        │                │                           │
-    │    ▼        ▼        ▼                ▼                           │
-    │ ┌──────┐ ┌──────┐ ┌──────┐       ┌──────┐                         │
-    │ │ GW 1 │ │ GW 2 │ │ GW 3 │  ...  │ GW N │  OTel Collector         │
-    │ │      │ │      │ │      │       │      │  (Gateway mode)         │
-    │ └──┬───┘ └──┬───┘ └──┬───┘       └──┬───┘                         │
-    │    │        │        │              │     Stateless               │
-    │    │        │        │              │     Fast validation & batch │
-    └────┼────────┼────────┼──────────────┼─────────────────────────────┘
-         │        │        │              │
-         └────────┴────────┴──────────────┘
-                           │
-                           ▼
-    ┌───────────────────────────────────────────────────────────────────┐
-    │                     LAYER 2: BUFFERING                            │
-    │                                                                   │
-    │              ┌────────────────────────────┐                       │
-    │              │        Apache Kafka        │                       │
-    │              │                            │                       │
-    │              │  Topics:                   │                       │
-    │              │  • otlp-traces   (12 part) │                       │
-    │              │  • otlp-metrics  (12 part) │                       │
-    │              │  • otlp-logs     (12 part) │                       │
-    │              │                            │                       │
-    │              │  Replicated, durable       │                       │
-    │              │  24-hour retention         │                       │
-    │              └────────────────────────────┘                       │
-    │                                                                   │
-    │  Why Kafka?                                                       │
-    │  • Decouples ingestion from processing                            │
-    │  • Survives backend outages (data stays in Kafka)                 │
-    │  • Enables replay if you need to reprocess                        │
-    │  • Horizontal scaling via partitions                              │
-    └────────────────────────────────┬──────────────────────────────────┘
+                               YOUR APPLICATIONS
+                     (Instrumented with OpenTelemetry SDKs)
                                      │
+                                     │ OTLP Protocol
                                      ▼
     ┌───────────────────────────────────────────────────────────────────┐
-    │                     LAYER 3: PROCESSING                           │
+    │                       LAYER 1: INGESTION                          │
     │                                                                   │
-    │    ┌────────────────┬────────────────┬────────────────┐           │
-    │    │                │                │                │           │
-    │    ▼                ▼                ▼                ▼           │
-    │ ┌──────┐        ┌──────┐        ┌──────┐        ┌──────┐          │
-    │ │ P1   │        │ P2   │        │ P3   │   ...  │ PN   │          │
-    │ │      │        │      │        │      │        │      │          │
-    │ │ ┌──┐ │        │ ┌──┐ │        │ ┌──┐ │        │ ┌──┐ │          │
-    │ │ │ T│ │        │ │ T│ │        │ │ T│ │        │ │ T│ │          │
-    │ │ │ M│ │        │ │ M│ │        │ │ M│ │        │ │ M│ │          │
-    │ │ │ L│ │        │ │ L│ │        │ │ L│ │        │ │ L│ │          │
-    │ │ └──┘ │        │ └──┘ │        │ └──┘ │        │ └──┘ │          │
-    │ └──────┘        └──────┘        └──────┘        └──────┘          │
-    │                                                                   │
-    │  OTel Collector (Processor mode)                                  │
-    │  Each processor handles:                                          │
-    │  • Sampling (keep all errors, sample 10% success)                 │
-    │  • Filtering (drop health checks, internal noise)                 │
-    │  • Enrichment (add K8s labels, environment info)                  │
-    │  • Batching (efficient writes to backends)                        │
-    └────────────────────────────────┬──────────────────────────────────┘
-                                     │
-                                     ▼
+    │                    ┌─────────────────┐                            │
+    │                    │  Load Balancer  │  HAProxy, NGINX, or cloud  │
+    │                    │   (Port 4317)   │  LB, Health-aware routing  │
+    │                    └────────┬────────┘                            │
+    │                             │                                     │
+    │          ┌──────────────────┼──────────────────┐                  │
+    │          │         │        │        │         │                  │
+    │          ▼         ▼        ▼        ▼         ▼                  │
+    │       ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐                │
+    │       │ GW 1 │ │ GW 2 │ │ GW 3 │ │ ...  │ │ GW N │                │
+    │       │      │ │      │ │      │ │      │ │      │                │
+    │       └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘                │
+    │          │        │        │        │        │                    │
+    │          │        │        │        │        │  OTel Collector    │
+    │          │        │        │        │        │  (Gateway mode)    │
+    │          │        │        │        │        │  Stateless, fast   │
+    └──────────┼────────┼────────┼────────┼────────┼────────────────────┘
+               │        │        │        │        │
+               └────────┴────────┼────────┴────────┘
+                                 │
+                                 ▼
     ┌───────────────────────────────────────────────────────────────────┐
-    │                     LAYER 4: STORAGE                              │
+    │                       LAYER 2: BUFFERING                          │
     │                                                                   │
-    │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │
-    │  │   Tempo     │    │   Mimir     │    │    Loki     │            │
-    │  │  (Traces)   │    │  (Metrics)  │    │   (Logs)    │            │
-    │  │             │    │             │    │             │            │
-    │  │  TraceQL    │    │  PromQL     │    │  LogQL      │            │
-    │  │  queries    │    │  queries    │    │  queries    │            │
-    │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘            │
-    │         │                  │                  │                   │
-    │         └──────────────────┼──────────────────┘                   │
-    │                            │                                      │
-    │                            ▼                                      │
-    │              ┌────────────────────────────┐                       │
-    │              │      Object Storage        │                       │
-    │              │     (S3 / MinIO / GCS)     │                       │
-    │              │                            │                       │
-    │              │  • Hot data in local SSD   │                       │
-    │              │  • Cold data in S3 (cheap) │                       │
-    │              │  • Unlimited retention     │                       │
-    │              └────────────────────────────┘                       │
-    └────────────────────────────────┬──────────────────────────────────┘
-                                     │
-                                     ▼
+    │                ┌────────────────────────────┐                     │
+    │                │        Apache Kafka        │                     │
+    │                │                            │                     │
+    │                │  Topics:                   │                     │
+    │                │  • otlp-traces   (12 part) │                     │
+    │                │  • otlp-metrics  (12 part) │                     │
+    │                │  • otlp-logs     (12 part) │                     │
+    │                │                            │                     │
+    │                │  Replicated, durable       │                     │
+    │                │  24-hour retention         │                     │
+    │                └────────────────────────────┘                     │
+    │                                                                   │
+    │    Why Kafka?                                                     │
+    │    • Decouples ingestion from processing                          │
+    │    • Survives backend outages (data stays in Kafka)               │
+    │    • Enables replay if you need to reprocess                      │
+    │    • Horizontal scaling via partitions                            │
+    └─────────────────────────────┬─────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌───────────────────────────────────────────────────────────────────┐
+    │                       LAYER 3: PROCESSING                         │
+    │                                                                   │
+    │          ┌──────────────────┼──────────────────┐                  │
+    │          │         │        │        │         │                  │
+    │          ▼         ▼        ▼        ▼         ▼                  │
+    │       ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐                │
+    │       │ P1   │ │ P2   │ │ P3   │ │ ...  │ │ PN   │                │
+    │       │      │ │      │ │      │ │      │ │      │                │
+    │       │ ┌──┐ │ │ ┌──┐ │ │ ┌──┐ │ │      │ │ ┌──┐ │                │
+    │       │ │ T│ │ │ │ T│ │ │ │ T│ │ │      │ │ │ T│ │                │
+    │       │ │ M│ │ │ │ M│ │ │ │ M│ │ │      │ │ │ M│ │                │
+    │       │ │ L│ │ │ │ L│ │ │ │ L│ │ │      │ │ │ L│ │                │
+    │       │ └──┘ │ │ └──┘ │ │ └──┘ │ │      │ │ └──┘ │                │
+    │       └──────┘ └──────┘ └──────┘ └──────┘ └──────┘                │
+    │                                                                   │
+    │    OTel Collector (Processor mode)                                │
+    │    Each processor handles:                                        │
+    │    • Sampling (keep all errors, sample 10% success)               │
+    │    • Filtering (drop health checks, internal noise)               │
+    │    • Enrichment (add K8s labels, environment info)                │
+    │    • Batching (efficient writes to backends)                      │
+    └─────────────────────────────┬─────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌───────────────────────────────────────────────────────────────────┐
+    │                        LAYER 4: STORAGE                           │
+    │                                                                   │
+    │       ┌─────────────┐   ┌─────────────┐   ┌─────────────┐         │
+    │       │   Tempo     │   │   Mimir     │   │    Loki     │         │
+    │       │  (Traces)   │   │  (Metrics)  │   │   (Logs)    │         │
+    │       │             │   │             │   │             │         │
+    │       │  TraceQL    │   │  PromQL     │   │  LogQL      │         │
+    │       │  queries    │   │  queries    │   │  queries    │         │
+    │       └──────┬──────┘   └──────┬──────┘   └──────┬──────┘         │
+    │              │                 │                 │                │
+    │              └─────────────────┼─────────────────┘                │
+    │                                │                                  │
+    │                                ▼                                  │
+    │                ┌────────────────────────────┐                     │
+    │                │      Object Storage        │                     │
+    │                │     (S3 / MinIO / GCS)     │                     │
+    │                │                            │                     │
+    │                │  • Hot data in local SSD   │                     │
+    │                │  • Cold data in S3 (cheap) │                     │
+    │                │  • Unlimited retention     │                     │
+    │                └────────────────────────────┘                     │
+    └─────────────────────────────┬─────────────────────────────────────┘
+                                  │
+                                  ▼
     ┌───────────────────────────────────────────────────────────────────┐
     │                     LAYER 5: VISUALIZATION                        │
     │                                                                   │
-    │              ┌────────────────────────────┐                       │
-    │              │         Grafana            │                       │
-    │              │    (Multiple instances)    │                       │
-    │              │                            │                       │
-    │              │  • Unified dashboards      │                       │
-    │              │  • Trace exploration       │                       │
-    │              │  • Log search              │                       │
-    │              │  • Alerting                │                       │
-    │              └────────────────────────────┘                       │
-    │                            │                                      │
-    │                            ▼                                      │
-    │              ┌────────────────────────────┐                       │
-    │              │        PostgreSQL          │                       │
-    │              │    (Shared state for HA)   │                       │
-    │              │                            │                       │
-    │              │  Dashboards, users,        │                       │
-    │              │  alerts stored here        │                       │
-    │              └────────────────────────────┘                       │
+    │                ┌────────────────────────────┐                     │
+    │                │         Grafana            │                     │
+    │                │    (Multiple instances)    │                     │
+    │                │                            │                     │
+    │                │  • Unified dashboards      │                     │
+    │                │  • Trace exploration       │                     │
+    │                │  • Log search              │                     │
+    │                │  • Alerting                │                     │
+    │                └────────────────────────────┘                     │
+    │                                │                                  │
+    │                                ▼                                  │
+    │                ┌────────────────────────────┐                     │
+    │                │        PostgreSQL          │                     │
+    │                │    (Shared state for HA)   │                     │
+    │                │                            │                     │
+    │                │  Dashboards, users,        │                     │
+    │                │  alerts stored here        │                     │
+    │                └────────────────────────────┘                     │
     └───────────────────────────────────────────────────────────────────┘
 ```
 
