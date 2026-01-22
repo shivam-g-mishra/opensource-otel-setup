@@ -225,21 +225,21 @@ cp env.example .env
              │                 │                 │
              ▼                 ▼                 ▼
       ┌──────────┐      ┌──────────┐      ┌──────────┐
-      │  Jaeger  │      │Prometheus│◄─────│   Loki   │
+      │  Jaeger  │      │Prometheus│      │   Loki   │
       │ (traces) │      │(metrics) │      │  (logs)  │
       │ [Badger] │      │  [TSDB]  │      │  [TSDB]  │
-      └────┬─────┘      └────┬─────┘      └────┬─────┘
-           │                 ▲                 │
-           │          ┌──────┴──────┐          │
-           │          │Node Exporter│          │
-           │          │(host metrics)│          │
-           │          └─────────────┘          │
-           └─────────────────┬─────────────────┘
-                             ▼
-                      ┌──────────┐
-                      │ Grafana  │
-                      │(dashboards)│
-                      └──────────┘
+      └────┬─────┘      └─────┬────┘      └────┬─────┘
+           │                  │                │
+           │           ┌──────┴──────┐         │
+           │           │Node Exporter│         │
+           │           │(host metrics)│         │
+           │           └─────────────┘         │
+           └──────────────────┬────────────────┘
+                              ▼
+                       ┌──────────┐
+                       │ Grafana  │
+                       │(dashboards)│
+                       └──────────┘
 ```
 
 ## Pre-built Dashboards
@@ -254,7 +254,7 @@ Grafana includes auto-provisioned dashboards:
 
 - **Collector alerts**: Down, high memory, queue filling, dropping data
 - **Prometheus alerts**: Down, high memory, storage filling
-- **Loki alerts**: Down, ingestion errors
+- **Loki alerts**: Down, request errors, high latency
 - **Jaeger alerts**: Down, storage high
 - **Infrastructure alerts**: Disk usage, memory usage, CPU, network, clock skew
 

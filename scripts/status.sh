@@ -10,6 +10,13 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
+# Source .env file if it exists
+if [ -f ".env" ]; then
+    set -a
+    source .env
+    set +a
+fi
+
 # Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
