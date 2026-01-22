@@ -1,1531 +1,1777 @@
-# Scalable OpenTelemetry Observability Stack
+# Building a Scalable Observability Platform Without Breaking the Bank
 
-## Architecture Overview
-
-**Version:** 2.0  
-**Date:** January 2026  
-**Status:** Approved
+**A Practical Guide for Teams Who Need Enterprise-Grade Observability on a Real-World Budget**
 
 ---
 
-## Quick Links
+## The Story Behind This Document
 
-| Document | Description |
-|----------|-------------|
-| **This Document** | Architecture concepts, design decisions, technology deep-dives |
-| [Implementation Guide](./implementation-guide.md) | Step-by-step deployment instructions |
-| [Config Files](./configs/) | All configuration files referenced in the guide |
+If you're reading this, chances are you've been in one of these situations:
 
----
+You're debugging a production incident at 2 AM. A customer reports that their checkout is failing. You check the logs—nothing obvious. You look at metrics—CPU and memory seem fine. You try to trace the request through your microservices, but the data is incomplete, scattered across different tools, and nothing correlates. Two hours later, you finally discover that a downstream payment service was timing out, but only for certain customers, and only when their cart had more than ten items.
 
-## Table of Contents
+Or maybe you've had the budget conversation. Your team finally gets approval for a proper observability solution. You evaluate Datadog, New Relic, Splunk—they're fantastic tools. Then you see the quote. For your 50-service architecture processing 20,000 events per second, you're looking at $20,000 to $40,000 per month. That's $240,000 to $480,000 per year—just to understand what your own software is doing.
 
-1. [Executive Summary](#executive-summary)
-2. [Understanding Observability](#understanding-observability)
-3. [Why OpenTelemetry?](#why-opentelemetry)
-4. [Current State Analysis](#current-state-analysis)
-5. [When and Why to Scale](#when-and-why-to-scale)
-6. [Target Architecture](#target-architecture)
-7. [Technology Deep Dive](#technology-deep-dive)
-8. [Data Flow & Processing](#data-flow--processing)
-9. [Infrastructure Requirements](#infrastructure-requirements)
-10. [Security Architecture](#security-architecture)
-11. [Cost Analysis](#cost-analysis)
-12. [Technology Decisions](#technology-decisions)
-13. [Appendix](#appendix-quick-reference)
+This guide exists because we believe there's a better way. Not better than the commercial tools in terms of features—they're genuinely excellent—but better for organizations where that kind of budget simply isn't realistic, or where spending that much on observability means sacrificing other critical investments.
+
+What follows is a battle-tested architecture for building a self-hosted observability platform using open-source software. It's the same architecture we've used to achieve 97% cost savings while maintaining the visibility we need to run reliable production systems.
 
 ---
 
-# Part I: Foundation
+## Who This Document Is For
 
-## Executive Summary
+This guide is written for **senior developers, platform engineers, and architects** who:
 
-### The Business Problem
+- Need comprehensive observability (traces, metrics, logs) but can't justify six-figure annual licensing costs
+- Want to understand not just *what* to build, but *why* each component exists and how they work together
+- Value data ownership and want telemetry to stay within their infrastructure
+- Are comfortable with infrastructure-as-code and can dedicate some engineering time to setup and maintenance
 
-Modern software systems are distributed, complex, and generate enormous amounts of operational data. When something goes wrong—a slow API, a failed transaction, a service outage—engineers need to quickly answer:
-
-- **What happened?** (the symptom)
-- **Where did it happen?** (which service, which instance)
-- **Why did it happen?** (root cause)
-- **How do we prevent it?** (patterns and trends)
-
-This requires comprehensive **observability**: the ability to understand a system's internal state by examining its outputs (logs, metrics, traces).
-
-### The Cost Problem
-
-Commercial observability platforms provide excellent capabilities but at significant cost:
-
-| Vendor | Pricing Model | Typical Cost (50K events/sec) |
-|--------|---------------|-------------------------------|
-| **Datadog** | Per host + per GB ingested | $20,000-40,000/month |
-| **New Relic** | Per GB ingested | $15,000-30,000/month |
-| **Splunk** | Per GB indexed | $25,000-50,000/month |
-| **Dynatrace** | Per host | $15,000-25,000/month |
-
-For a mid-size company with 100+ services, costs can reach **$200,000-500,000/year**.
-
-### Our Solution
-
-A **self-hosted observability platform** built entirely on open-source software, providing:
-
-- **97% cost reduction** compared to commercial solutions
-- **Full data ownership** (telemetry never leaves your infrastructure)
-- **No vendor lock-in** (OpenTelemetry is an open standard)
-- **Unlimited scalability** (from single-node to enterprise)
-- **Complete customization** (retention, sampling, processing rules)
-
-### Technology Stack Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              APPLICATIONS                                │
-│         (Your services instrumented with OpenTelemetry SDKs)            │
-└─────────────────────────────────┬───────────────────────────────────────┘
-                                  │ OTLP Protocol
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         OPENTELEMETRY COLLECTOR                          │
-│              (Receives, processes, and routes all telemetry)            │
-└───────────┬─────────────────────┬─────────────────────┬─────────────────┘
-            │                     │                     │
-            ▼                     ▼                     ▼
-┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
-│      TEMPO        │ │  PROMETHEUS/MIMIR │ │       LOKI        │
-│    (Traces)       │ │    (Metrics)      │ │      (Logs)       │
-└─────────┬─────────┘ └─────────┬─────────┘ └─────────┬─────────┘
-          │                     │                     │
-          └─────────────────────┼─────────────────────┘
-                                │
-                                ▼
-                    ┌───────────────────┐
-                    │      GRAFANA      │
-                    │  (Visualization)  │
-                    └───────────────────┘
-```
+If you're looking for a fully-managed, zero-maintenance solution and budget isn't a constraint, this probably isn't for you. But if you're willing to invest some engineering effort in exchange for dramatically lower costs and complete control over your observability data, read on.
 
 ---
 
-## Understanding Observability
+## Document Structure
 
-### The Three Pillars of Observability
+This document is organized as a journey from understanding the problem to designing a solution:
 
-Observability is built on three complementary data types, each providing different insights:
+| Part | What You'll Learn |
+|------|-------------------|
+| **Part I: The Foundation** | Why observability matters, what the three pillars actually mean in practice, and why we chose OpenTelemetry |
+| **Part II: Where We Start** | Understanding the single-node architecture, its capabilities, and honest assessment of its limitations |
+| **Part III: The Scalable Architecture** | The multi-tier design that handles high volume, provides high availability, and grows with your needs |
+| **Part IV: Making Decisions** | Technology choices, trade-offs we've accepted, and how to think about costs |
 
-```mermaid
-flowchart LR
-    subgraph Pillars["Three Pillars of Observability"]
-        direction TB
-        
-        subgraph Traces["🔍 TRACES"]
-            T1["What: Request journey across services"]
-            T2["When: Single request debugging"]
-            T3["Example: Why did this API call take 5 seconds?"]
-        end
-        
-        subgraph Metrics["📊 METRICS"]
-            M1["What: Numerical measurements over time"]
-            M2["When: Trends, alerting, capacity planning"]
-            M3["Example: What's our p99 latency trend?"]
-        end
-        
-        subgraph Logs["📝 LOGS"]
-            L1["What: Discrete events with context"]
-            L2["When: Debugging, audit trails"]
-            L3["Example: What errors occurred at 3am?"]
-        end
-    end
-    
-    style Traces fill:#e3f2fd,stroke:#1976d2
-    style Metrics fill:#fff3e0,stroke:#ff9800
-    style Logs fill:#e8f5e9,stroke:#4caf50
+When you're ready to actually build this, head to the [Implementation Guide](./implementation-guide.md) for step-by-step instructions.
+
+---
+
+# Part I: The Foundation
+
+## Why Observability Actually Matters
+
+Let's start with a scenario that's probably familiar.
+
+Your e-commerce platform handles a flash sale. Traffic spikes 10x. Orders start failing. The on-call engineer sees elevated error rates but can't pinpoint the cause. Is it the database? The payment gateway? A network issue? A code bug that only manifests under load?
+
+Without proper observability, debugging this is like trying to diagnose a car problem by only looking at the "check engine" light. You know something's wrong, but you have no idea what.
+
+**Observability is the ability to understand what's happening inside your system by examining what it outputs.** It's not just monitoring (is it up or down?), and it's not just logging (what events occurred?). It's the capability to ask arbitrary questions about your system's behavior and get meaningful answers—even questions you didn't anticipate when you built it.
+
+The three outputs that make this possible are **traces**, **metrics**, and **logs**. Each tells you something different, and the magic happens when you can correlate all three.
+
+### The Three Pillars: A Practical Explanation
+
+Let me explain each pillar not in abstract terms, but in terms of the questions they help you answer.
+
+#### Traces: Following a Request's Journey
+
+Imagine you're a detective following a suspect through a city. A trace is like a complete record of everywhere they went, how long they spent at each location, and what they did there.
+
+In software terms, a trace follows a single request as it travels through your distributed system. When a user clicks "Place Order," that request might touch your API gateway, authentication service, inventory service, payment processor, order service, notification system, and database—all before returning a response.
+
+A trace captures this entire journey:
+
 ```
-
-### Traces: Understanding Request Flow
-
-**What are traces?**
-
-A trace represents a single request's journey through your distributed system. It consists of **spans**—individual units of work with timing information.
-
-```
-Trace: User Login Request (trace_id: abc123)
+User Request: Place Order (trace_id: abc123)
 │
-├── Span: API Gateway (50ms)
-│   └── Span: Auth Service (30ms)
-│       ├── Span: Database Query (15ms)
-│       └── Span: Cache Lookup (2ms)
+├── API Gateway (total: 850ms)
+│   ├── Request validation (15ms)
+│   └── Route to order service
+│       │
+│       └── Order Service (450ms)
+│           ├── Validate cart (25ms)
+│           ├── Check inventory (180ms) ← Why so slow?
+│           │   └── Database query (175ms) ← Found it!
+│           ├── Process payment (200ms)
+│           │   └── External API call (195ms)
+│           └── Send confirmation (40ms)
 │
-└── Span: Session Service (10ms)
-    └── Span: Redis Write (5ms)
-
-Total Duration: 60ms
+└── Total response time: 850ms
 ```
 
-**When to use traces:**
-- Debugging slow requests ("Why did this take 5 seconds?")
-- Understanding service dependencies
-- Finding bottlenecks in request flow
-- Root cause analysis for errors
+With this trace, you can immediately see that the 850ms response time is primarily caused by a slow inventory database query (175ms) and the external payment API (195ms). Without tracing, you'd be guessing.
 
-**Key trace concepts:**
-| Concept | Description |
-|---------|-------------|
-| **Trace** | Complete journey of a request (collection of spans) |
-| **Span** | Single unit of work (has start time, duration, attributes) |
-| **Trace ID** | Unique identifier linking all spans in a trace |
-| **Span ID** | Unique identifier for each span |
-| **Parent Span** | The span that initiated this span |
-| **Attributes** | Key-value metadata (user_id, http.status_code, etc.) |
+**When traces shine:**
+- "Why did this specific request take so long?"
+- "Where in my system did this error originate?"
+- "What's the actual call path between my services?"
+- "Which downstream service is causing my latency?"
 
-### Metrics: Understanding System Behavior
+#### Metrics: Understanding System Behavior Over Time
 
-**What are metrics?**
+If traces are for investigating individual requests, metrics are for understanding patterns and trends across millions of requests.
 
-Metrics are numerical measurements collected over time. They're highly efficient for storage and querying, making them ideal for dashboards and alerts.
+Metrics are numerical measurements collected at regular intervals. They're highly compressed (a number rather than a log line), which makes them efficient to store and fast to query, even over long time periods.
 
-**Types of metrics:**
-
-| Type | Description | Example |
-|------|-------------|---------|
-| **Counter** | Cumulative value that only increases | Total HTTP requests: 1,234,567 |
-| **Gauge** | Value that can go up or down | Current memory usage: 2.5 GB |
-| **Histogram** | Distribution of values | Request latency buckets (p50, p90, p99) |
-| **Summary** | Pre-calculated percentiles | Request duration: p99 = 250ms |
-
-**When to use metrics:**
-- Real-time dashboards
-- Alerting on thresholds
-- Capacity planning
-- SLO/SLA monitoring
-- Trend analysis
-
-**Example metrics:**
-```
-# Counter - total requests
-http_requests_total{method="GET", status="200", service="api"} 12345
-
-# Gauge - current connections
-db_connections_active{pool="primary"} 45
-
-# Histogram - latency distribution
-http_request_duration_seconds_bucket{le="0.1"} 8000
-http_request_duration_seconds_bucket{le="0.5"} 9500
-http_request_duration_seconds_bucket{le="1.0"} 9900
-```
-
-### Logs: Understanding Events
-
-**What are logs?**
-
-Logs are discrete events that occurred at a specific time. They contain structured or unstructured text describing what happened.
-
-**Log levels:**
-| Level | When to Use |
-|-------|-------------|
-| **ERROR** | Something failed, requires attention |
-| **WARN** | Potential issue, degraded but functioning |
-| **INFO** | Normal operations, significant events |
-| **DEBUG** | Detailed diagnostic information |
-| **TRACE** | Very detailed, usually disabled in production |
-
-**Structured vs. Unstructured logs:**
+Think of metrics like your car's dashboard. You don't need to know everything happening inside the engine, but you do need to know the speed, fuel level, and engine temperature. These numbers give you a continuous picture of system health.
 
 ```
-# Unstructured (hard to query)
-2024-01-15 10:23:45 ERROR Failed to process payment for user 12345
+Example metrics for an API service:
 
-# Structured (easy to query and correlate)
+http_requests_total{service="order-api", status="200"}: 1,234,567
+http_requests_total{service="order-api", status="500"}: 234
+http_request_duration_seconds_p99{service="order-api"}: 0.45
+active_database_connections{pool="primary"}: 42
+order_processing_queue_depth: 127
+```
+
+From these five numbers, you can understand:
+- How much traffic you're serving (1.2M successful requests)
+- Your error rate (234/1,234,801 ≈ 0.02%)
+- Your worst-case latency (99th percentile at 450ms)
+- Database connection pool utilization (42 connections in use)
+- Whether you're keeping up with orders (127 in queue)
+
+**When metrics shine:**
+- "What's our error rate trending over the past week?"
+- "Are we approaching capacity limits?"
+- "How does today's latency compare to yesterday?"
+- "Should I wake someone up?" (alerting)
+
+#### Logs: The Detailed Record
+
+Logs are the narrative of your system—discrete events that describe what happened at specific moments. They're the most familiar observability signal because developers have been writing print statements since the beginning of programming.
+
+But there's a crucial distinction between logs that help you debug and logs that just fill up your disk.
+
+**Unhelpful log:**
+```
+2024-01-15 10:23:45 ERROR Payment failed
+```
+
+This tells you almost nothing. Which payment? Which user? Why did it fail? What was the request context?
+
+**Helpful log:**
+```json
 {
-  "timestamp": "2024-01-15T10:23:45Z",
-  "level": "ERROR",
-  "message": "Failed to process payment",
-  "user_id": "12345",
-  "payment_id": "pay_abc123",
-  "error": "insufficient_funds",
-  "trace_id": "abc123def456"  // Links to trace!
+  "timestamp": "2024-01-15T10:23:45.123Z",
+  "level": "error",
+  "service": "payment-service",
+  "message": "Payment processing failed",
+  "trace_id": "abc123def456",
+  "user_id": "user_789",
+  "order_id": "order_456",
+  "payment_amount": 99.99,
+  "payment_provider": "stripe",
+  "error_code": "card_declined",
+  "error_message": "Your card was declined.",
+  "request_id": "req_xyz"
 }
 ```
 
-### Correlation: The Power of Connected Data
+Now you can:
+- Find this log entry quickly using any of these fields
+- Jump to the related trace using `trace_id`
+- See exactly what went wrong (`card_declined`)
+- Correlate with other events for the same user or order
 
-The real power of observability comes from **correlating** all three signals:
+**When logs shine:**
+- "What exactly happened when this error occurred?"
+- "What did the user do before the failure?"
+- "Are there audit requirements I need to satisfy?"
+- "What was the full error message and stack trace?"
 
-```mermaid
-flowchart TD
-    Alert["🚨 Alert: High Error Rate"] --> Metrics
-    
-    subgraph Investigation["Investigation Flow"]
-        Metrics["📊 Metrics<br/>Error rate spike at 3:00 PM"] --> Logs
-        Logs["📝 Logs<br/>Filter by time + error level<br/>Found: 'Connection refused'"] --> Traces
-        Traces["🔍 Traces<br/>Trace ID from log<br/>Shows: DB timeout at 2.5s"]
-    end
-    
-    Traces --> RootCause["✅ Root Cause<br/>Database connection pool exhausted"]
-    
-    style Alert fill:#ffcdd2,stroke:#c62828
-    style RootCause fill:#c8e6c9,stroke:#2e7d32
+### The Real Power: Correlation
+
+Here's where it gets interesting. Each pillar is useful on its own, but the real power comes from combining them.
+
+Picture this debugging flow:
+
 ```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  1. ALERT FIRES                                                          │
+│     "Error rate > 1% for order-service"                                  │
+│     (Metric told us something is wrong)                                  │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  2. INVESTIGATE METRICS                                                  │
+│     Error rate spiked at 10:15 AM                                        │
+│     Latency also increased                                               │
+│     Database connection pool at 100%                                     │
+│     (Metrics narrow down the time and potential cause)                   │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  3. SEARCH LOGS                                                          │
+│     Filter: service=order-service, level=error, time=10:15-10:20        │
+│     Found: "Connection pool exhausted, cannot acquire connection"        │
+│     Found: "Timeout waiting for database connection"                     │
+│     (Logs tell us what errors occurred)                                  │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  4. EXAMINE TRACES                                                       │
+│     Click trace_id from error log                                        │
+│     See: inventory-service making 50 DB queries per request             │
+│     See: Each query holding connection for 2+ seconds                    │
+│     (Trace shows us WHY the pool was exhausted)                          │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  5. ROOT CAUSE                                                           │
+│     A recent deployment introduced an N+1 query bug in inventory        │
+│     Under high load, this exhausted the connection pool                  │
+│     (Now we know exactly what to fix)                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+This investigation took 10 minutes with proper observability. Without it? Could easily be hours of guessing, adding debug logging, redeploying, and hoping you get lucky.
 
 ---
 
-## Why OpenTelemetry?
+## Why OpenTelemetry is the Right Foundation
 
-### What is OpenTelemetry?
+When we started building this platform, we had to make a fundamental choice: what instrumentation standard should we use?
 
-**OpenTelemetry (OTel)** is an open-source observability framework that provides:
+We could have gone with vendor-specific SDKs (Datadog's libraries, New Relic's agents), but that would create lock-in. We could have used multiple specialized tools (Jaeger for traces, Prometheus client for metrics, Fluentd for logs), but that meant maintaining multiple instrumentation systems.
 
-1. **APIs and SDKs** for instrumenting applications (available for all major languages)
-2. **A standard protocol (OTLP)** for transmitting telemetry data
-3. **The OpenTelemetry Collector** for receiving, processing, and exporting telemetry
+We chose **OpenTelemetry** because it solves both problems.
 
-```mermaid
-flowchart LR
-    subgraph Apps["Your Applications"]
-        SDK1["Go SDK"] & SDK2["Java SDK"] & SDK3["Python SDK"] & SDK4[".NET SDK"]
-    end
-    
-    subgraph OTel["OpenTelemetry"]
-        OTLP["OTLP Protocol"]
-        Collector["OTel Collector"]
-    end
-    
-    subgraph Backends["Any Backend"]
-        B1["Jaeger/Tempo"]
-        B2["Prometheus/Mimir"]
-        B3["Loki/Elasticsearch"]
-        B4["Datadog/New Relic"]
-    end
-    
-    Apps -->|OTLP| Collector
-    Collector --> Backends
-    
-    style OTel fill:#e8f5e9,stroke:#4caf50
+### What OpenTelemetry Actually Is
+
+OpenTelemetry is three things:
+
+1. **A specification** that defines how telemetry data should be structured
+2. **SDKs for every major language** that implement this specification
+3. **The OpenTelemetry Collector**, a vendor-agnostic data pipeline
+
+The key insight is separation of concerns. Your application code instruments itself using the OpenTelemetry SDK, speaking a standard protocol (OTLP). Where that data goes—Jaeger, Datadog, Honeycomb, your own backends—is a deployment-time decision, not a code-time decision.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        YOUR APPLICATION CODE                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
+│  │ Go SDK   │  │ Java SDK │  │.NET SDK  │  │ Python   │  ...          │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘               │
+│       │             │             │             │                       │
+│       └─────────────┴─────────────┴─────────────┘                       │
+│                           │                                              │
+│                     OTLP Protocol                                        │
+│                    (Open Standard)                                       │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    OPENTELEMETRY COLLECTOR                               │
+│            Receive → Process → Export (your choice)                      │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+          ┌─────────────────┼─────────────────┐
+          │                 │                 │
+          ▼                 ▼                 ▼
+     ┌─────────┐       ┌─────────┐       ┌─────────┐
+     │ Jaeger  │       │  Your   │       │ Datadog │
+     │ (Self-  │       │ Backend │       │ (If you │
+     │ hosted) │       │  Here   │       │  want)  │
+     └─────────┘       └─────────┘       └─────────┘
 ```
 
-### Why Choose OpenTelemetry?
+### Why This Matters for Your Team
 
-| Benefit | Explanation |
-|---------|-------------|
-| **Vendor Neutral** | Switch backends without changing application code |
-| **Industry Standard** | Backed by CNCF, adopted by all major vendors |
-| **Single Instrumentation** | One SDK for traces, metrics, and logs |
-| **Rich Ecosystem** | SDKs for 11+ languages, 100+ integrations |
-| **Future Proof** | Rapidly becoming the industry standard |
-| **Community Support** | Large, active open-source community |
+**No vendor lock-in.** If you start with self-hosted backends and later decide you want a managed service, you change your Collector configuration—not your application code. Your investment in instrumentation is protected.
 
-### OpenTelemetry vs. Alternatives
+**One SDK to learn.** Instead of teaching your team Jaeger's SDK for traces, Prometheus client for metrics, and some logging framework for logs, everyone learns OpenTelemetry. One set of concepts, one set of APIs.
 
-| Feature | OpenTelemetry | Jaeger SDK | Prometheus Client | Vendor SDKs |
-|---------|---------------|------------|-------------------|-------------|
-| **Traces** | ✅ | ✅ | ❌ | ✅ |
-| **Metrics** | ✅ | ❌ | ✅ | ✅ |
-| **Logs** | ✅ | ❌ | ❌ | ✅ |
-| **Vendor Neutral** | ✅ | ✅ | ✅ | ❌ |
-| **Single SDK** | ✅ | ❌ | ❌ | ✅ |
-| **Industry Standard** | ✅ | Partial | Partial | ❌ |
+**Industry momentum.** OpenTelemetry is a CNCF project with contributions from Google, Microsoft, Amazon, Splunk, Datadog, and most other major players. It's rapidly becoming the standard way to instrument applications. Learning it now is a career investment.
 
-### The OpenTelemetry Collector
+**Rich ecosystem.** Auto-instrumentation libraries exist for most common frameworks. In many cases, you can add observability to an existing application with minimal code changes.
 
-The **OTel Collector** is the heart of our architecture. It's a vendor-agnostic proxy that can:
+### The OpenTelemetry Collector: Your Swiss Army Knife
 
-```mermaid
-flowchart LR
-    subgraph Receive["📥 RECEIVE"]
-        R1["OTLP"]
-        R2["Jaeger"]
-        R3["Prometheus"]
-        R4["Zipkin"]
-        R5["FluentBit"]
-    end
-    
-    subgraph Process["⚙️ PROCESS"]
-        P1["Batch"]
-        P2["Filter"]
-        P3["Transform"]
-        P4["Sample"]
-        P5["Enrich"]
-    end
-    
-    subgraph Export["📤 EXPORT"]
-        E1["Tempo"]
-        E2["Mimir"]
-        E3["Loki"]
-        E4["Kafka"]
-        E5["Any Vendor"]
-    end
-    
-    Receive --> Process --> Export
-```
+The Collector deserves special attention because it's the component that gives you flexibility. It's a standalone service that can receive telemetry from anywhere, transform it however you need, and send it wherever you want.
 
-**Key Collector capabilities:**
+Think of it as a universal adapter for observability data:
 
-| Capability | What It Does | Why It Matters |
-|------------|--------------|----------------|
-| **Protocol Translation** | Convert between formats (Jaeger ↔ OTLP) | Accept data from any source |
-| **Batching** | Group telemetry into efficient batches | Reduce network overhead |
-| **Sampling** | Keep subset of traces intelligently | Control costs and volume |
-| **Filtering** | Drop unwanted telemetry | Reduce noise and costs |
-| **Enrichment** | Add metadata (K8s labels, etc.) | Better context for debugging |
-| **Routing** | Send different data to different backends | Flexibility in storage |
-| **Queuing** | Buffer data during backend outages | Prevent data loss |
-| **Retry** | Retry failed exports | Reliability |
+**Receive from anything:**
+- OTLP (native OpenTelemetry protocol)
+- Jaeger format (for existing Jaeger instrumentation)
+- Zipkin format
+- Prometheus scrape targets
+- Syslog
+- AWS CloudWatch
+- ...dozens more
+
+**Process however you need:**
+- Filter out noisy or low-value telemetry
+- Sample traces intelligently (keep errors, sample successes)
+- Add metadata (Kubernetes labels, deployment info)
+- Transform attribute names for consistency
+- Batch data for efficient export
+- Redact sensitive information
+
+**Export to anywhere:**
+- Your self-hosted backends (Jaeger, Prometheus, Loki)
+- Commercial services (Datadog, New Relic, Honeycomb)
+- Cloud-native services (AWS X-Ray, Google Cloud Trace)
+- Multiple destinations simultaneously
+
+This flexibility is why the Collector is the heart of our architecture. Applications talk to the Collector, and the Collector handles everything else.
 
 ---
 
-# Part II: Current State & Scaling
+# Part II: Starting Point and Limitations
 
-## Current State Analysis
+*Now that we understand what we're building and why, let's look at where most teams should actually start—and when that starting point stops being enough.*
 
-### Single-Node Architecture
+## The Single-Node Architecture
 
-The current implementation runs all observability components on a single server:
+Let's be honest about where most teams should start: a single-node deployment running everything in Docker Compose.
 
-```mermaid
-flowchart TB
-    subgraph Apps["📱 Applications"]
-        A1["Service A"]
-        A2["Service B"]
-        A3["Service C"]
-    end
-    
-    subgraph SingleNode["🖥️ Single Node (Docker Compose)"]
-        OC["OpenTelemetry Collector<br/>━━━━━━━━━━━━━━━━━━━<br/>• Receives OTLP<br/>• Batches data<br/>• Persistent queue"]
-        
-        subgraph Storage["Storage Layer"]
-            J[("Jaeger<br/>━━━━━━━━<br/>Badger DB<br/>~50K spans/s")]
-            P[("Prometheus<br/>━━━━━━━━━<br/>TSDB<br/>~1M series")]
-            L[("Loki<br/>━━━━━━<br/>BoltDB<br/>~50K lines/s")]
-        end
-        
-        G["Grafana<br/>━━━━━━━━<br/>Dashboards<br/>Alerting"]
-    end
-    
-    Apps -->|"OTLP (gRPC/HTTP)"| OC
-    OC -->|Traces| J
-    OC -->|Metrics| P
-    OC -->|Logs| L
-    J & P & L --> G
-    
-    style SingleNode fill:#e3f2fd,stroke:#1976d2
-    style OC fill:#ff9800,stroke:#e65100
+This isn't a compromise or a "demo" setup—it's a legitimate production architecture for many use cases. Understanding what it can and can't do will help you make informed decisions about when to scale.
+
+### What You Get
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          SINGLE SERVER                                   │
+│                   (Your $100-200/month VM)                              │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    Docker Compose Stack                           │   │
+│  │                                                                   │   │
+│  │   ┌───────────────────────────────────────────────────────┐     │   │
+│  │   │              OpenTelemetry Collector                   │     │   │
+│  │   │    ┌─────────────────────────────────────────────┐    │     │   │
+│  │   │    │  • Receives OTLP from your applications     │    │     │   │
+│  │   │    │  • Queues data to disk (survives restarts)  │    │     │   │
+│  │   │    │  • Routes to appropriate backends           │    │     │   │
+│  │   │    └─────────────────────────────────────────────┘    │     │   │
+│  │   └───────────────────────────────────────────────────────┘     │   │
+│  │                              │                                    │   │
+│  │              ┌───────────────┼───────────────┐                   │   │
+│  │              │               │               │                   │   │
+│  │              ▼               ▼               ▼                   │   │
+│  │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │   │
+│  │   │   Jaeger    │   │ Prometheus  │   │    Loki     │          │   │
+│  │   │  (Traces)   │   │  (Metrics)  │   │   (Logs)    │          │   │
+│  │   │             │   │             │   │             │          │   │
+│  │   │ ~50K spans/ │   │  ~1M active │   │ ~50K lines/ │          │   │
+│  │   │   second    │   │   series    │   │   second    │          │   │
+│  │   └─────────────┘   └─────────────┘   └─────────────┘          │   │
+│  │              │               │               │                   │   │
+│  │              └───────────────┼───────────────┘                   │   │
+│  │                              │                                    │   │
+│  │                              ▼                                    │   │
+│  │                     ┌─────────────┐                              │   │
+│  │                     │   Grafana   │                              │   │
+│  │                     │ Dashboards  │                              │   │
+│  │                     │  Alerting   │                              │   │
+│  │                     └─────────────┘                              │   │
+│  │                                                                   │   │
+│  └───────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### What Each Component Does
+With this setup, running on a single 8-CPU, 16GB RAM server, you can:
 
-| Component | Role | Technology | Storage |
-|-----------|------|------------|---------|
-| **OTel Collector** | Receives, processes, routes telemetry | OTel Collector Contrib | Persistent queue (disk) |
-| **Jaeger** | Stores and queries distributed traces | Jaeger All-in-One | Badger (embedded KV store) |
-| **Prometheus** | Stores and queries metrics | Prometheus | TSDB (time-series DB) |
-| **Loki** | Stores and queries logs | Grafana Loki | BoltDB + chunks on disk |
-| **Grafana** | Visualizes all data, alerting | Grafana OSS | SQLite (dashboards) |
+- **Ingest approximately 50,000 events per second** across traces, metrics, and logs
+- **Store 30 days of data** with reasonable retention policies
+- **Query dashboards with sub-second response times** for typical time windows
+- **Alert on any metric or log pattern** with Grafana's built-in alerting
+- **Survive service restarts** without losing data (persistent queues)
+- **Auto-recover from failures** (Docker restart policies)
 
-### Current Capabilities & Limits
+For a team of 5-20 developers running 10-50 microservices, this is often more than enough.
 
-| Metric | Current Capacity | How We Measured |
-|--------|------------------|-----------------|
-| **Traces** | ~50,000 spans/second | OTel Collector benchmark |
-| **Metrics** | ~1,000,000 active series | Prometheus stress test |
-| **Logs** | ~50,000 lines/second | Loki ingestion test |
-| **Query Latency** | <1s for 1h window | Grafana dashboard load |
-| **Data Retention** | 30 days | Configurable per backend |
-| **Storage Growth** | ~50 GB/day at moderate load | Actual measurement |
+### What's Already Production-Ready
 
-### Reliability Features (Already Implemented)
+I want to emphasize that the single-node setup isn't a toy. It includes:
 
-| Feature | How It Works | Benefit |
-|---------|--------------|---------|
-| **Persistent Queues** | OTel Collector writes to disk before export | Data survives restarts |
-| **Resource Limits** | Docker memory/CPU limits per container | Prevents OOM crashes |
-| **Health Checks** | Each container exposes health endpoint | Auto-restart on failure |
-| **Auto-Restart** | Docker `restart: unless-stopped` | Self-healing |
-| **Graceful Shutdown** | 30s drain period before stop | Zero data loss on deploy |
-| **Automated Backups** | Daily cron job backs up volumes | Disaster recovery |
+**Persistent queues**: The OpenTelemetry Collector writes data to disk before attempting to export it. If Jaeger is temporarily down, data queues up and gets delivered when it recovers. This isn't just "buffering"—it survives collector restarts.
 
-### Strengths of Current Setup
+**Resource limits**: Each container has CPU and memory limits. This prevents one component from starving others and makes behavior predictable under load.
 
-| Strength | Details |
-|----------|---------|
-| **Simplicity** | One command (`docker compose up`) deploys everything |
-| **Low Cost** | Runs on a single $50-150/month VPS or on-prem server |
-| **Easy Operations** | One node to monitor, update, backup |
-| **Full Featured** | Complete observability for traces, metrics, logs |
-| **Production Ready** | Health checks, persistence, alerting included |
-| **Quick Recovery** | Simple backup/restore process |
+**Health checks**: Every service exposes a health endpoint. Docker monitors these and automatically restarts unhealthy containers.
 
-### Limitations (Why You Might Need to Scale)
+**Graceful shutdown**: When you deploy updates, services have 30 seconds to drain in-flight data before stopping. Combined with persistent queues, this means zero data loss during deployments.
 
-| Limitation | Impact | Risk Level |
-|------------|--------|------------|
-| **Single Point of Failure** | Node failure = complete observability blackout | 🔴 High |
-| **Vertical Scaling Only** | Can only add resources to one machine | 🟡 Medium |
-| **No Geographic Redundancy** | Cannot survive datacenter/region failure | 🟡 Medium |
-| **Shared Resources** | Heavy Prometheus query affects Jaeger writes | 🟡 Medium |
-| **Maintenance Downtime** | Upgrades require brief interruption | 🟢 Low |
-| **Limited Throughput** | Hard ceiling at ~50K events/sec | 🟢 Low* |
+### Being Honest About Limitations
 
-*Low risk unless you're approaching this limit
+Here's where I need to be direct about what this architecture can't do:
+
+**Single point of failure.** If the server goes down—hardware failure, network issue, cloud provider problem—you have zero observability until it's back. For many teams, brief observability gaps are acceptable. For teams with strict SLAs, they're not.
+
+**Vertical scaling only.** When you hit capacity limits, your only option is a bigger server. At some point, bigger servers don't exist or aren't cost-effective.
+
+**Shared resources.** A heavy Prometheus query can affect Jaeger write performance. A log ingestion spike can slow down everything. Components compete for CPU, memory, and disk I/O.
+
+**No geographic distribution.** If your applications run in multiple regions, telemetry from distant regions has higher latency. You can't have region-local observability.
+
+### When Single-Node Is the Right Choice
+
+Stay with single-node if:
+
+- Your sustained throughput is comfortably under 50,000 events per second
+- Your uptime SLA allows for occasional brief outages (99% uptime = 3.6 days/year)
+- Your team is small and prefers operational simplicity
+- Your applications are in a single region
+- Observability is important but not mission-critical
+
+### When You Need to Scale
+
+Consider scaling when:
+
+- You're consistently hitting 50,000+ events per second
+- You need 99.9%+ uptime for observability itself
+- You're running multi-region and need low-latency telemetry collection everywhere
+- Compliance requirements mandate no data loss
+- Query performance is suffering during peak load
 
 ---
 
-## When and Why to Scale
+# Part III: The Scalable Architecture
 
-### Decision Framework
+## The Design Philosophy
 
-Use this flowchart to determine if you need to scale:
+Before diving into components, let me explain the principles that guide this architecture. These aren't arbitrary choices—they're lessons learned from running observability at scale.
 
-```mermaid
-flowchart TD
-    Start["🤔 Should I Scale?"] --> Q1
-    
-    Q1{"Is sustained throughput<br/>> 50K events/sec?"}
-    Q1 -->|Yes| Scale["✅ Scale to Multi-Node"]
-    Q1 -->|No| Q2
-    
-    Q2{"Do you need<br/>99.9%+ uptime SLA?"}
-    Q2 -->|Yes| Scale
-    Q2 -->|No| Q3
-    
-    Q3{"Do you have<br/>multi-region apps?"}
-    Q3 -->|Yes| Scale
-    Q3 -->|No| Q4
-    
-    Q4{"Data residency<br/>compliance required?"}
-    Q4 -->|Yes| Scale
-    Q4 -->|No| Q5
-    
-    Q5{"Frequent performance<br/>issues?"}
-    Q5 -->|Yes| Optimize["⚡ First: Optimize Single-Node"]
-    Q5 -->|No| Stay["✅ Stay Single-Node"]
-    
-    Optimize --> Q6{"Still having<br/>issues?"}
-    Q6 -->|Yes| Scale
-    Q6 -->|No| Stay
-    
-    style Scale fill:#c8e6c9,stroke:#4caf50
-    style Stay fill:#e3f2fd,stroke:#2196f3
-    style Optimize fill:#fff3e0,stroke:#ff9800
-```
+### Principle 1: Decouple Ingestion from Processing
 
-### Problems That Scaling Solves
+In the single-node setup, the Collector directly exports to backends. If a backend is slow or down, the Collector slows down or queues up. Under high load, this coupling becomes a problem.
 
-#### Problem 1: Single Point of Failure
+The scalable architecture introduces a message queue (Kafka) between ingestion and processing. Collectors can accept data at full speed regardless of backend health. Data is durably stored in Kafka until processors are ready for it.
 
-**The Issue:**
-```
-Single Node Architecture:
-                    
-   [Node] ──── If this fails, everything fails
-      │
-      └── Jaeger, Prometheus, Loki, Grafana
-          ALL unavailable during failure
-```
+Think of it like a warehouse between a factory and retail stores. The factory doesn't slow down just because one store is restocking. The warehouse absorbs the variation.
 
-**The Solution:**
-```
-Multi-Node Architecture:
+### Principle 2: Scale Components Independently
 
-   [Node 1] ──┐
-   [Node 2] ──┼── If any node fails, others continue
-   [Node 3] ──┘
-```
+Different bottlenecks require different solutions. If you're CPU-bound on processing, add more processors. If you're network-bound on ingestion, add more gateways. If you're storage-bound, add object storage capacity.
 
-| Scenario | Single-Node | Multi-Node |
-|----------|-------------|------------|
-| Node crash | 100% outage until restart | 0% outage (others take over) |
-| Disk failure | Data loss possible | No data loss (replicated) |
-| Network issue | Complete blackout | Partial, graceful degradation |
-| Realistic SLA | ~99% (8.7 hours downtime/year) | ~99.9% (8.7 minutes downtime/year) |
+The architecture separates concerns so each component can scale based on its own constraints.
 
-#### Problem 2: Throughput Ceiling
+### Principle 3: Accept Graceful Degradation
 
-**The Issue:**
+Total system failure should be extraordinarily rare. Partial degradation—slower queries, some data sampling, delayed processing—is an acceptable trade-off for resilience.
 
-A single OTel Collector can process ~50K events/second. Beyond that:
-- Events queue up
-- Memory pressure increases  
-- Data gets dropped
+When a component fails, others continue working. When you're overloaded, you shed load intelligently (sampling) rather than failing completely.
 
-**The Solution:**
+### Principle 4: Optimize for the Common Case
 
-Multiple collectors behind a load balancer:
+Most telemetry isn't interesting. Most traces are successful requests. Most logs are routine. Most metrics are within normal ranges.
+
+The architecture optimizes for high-volume, low-value data (sampling, compression, cheap storage) while ensuring high-value data (errors, anomalies, slow requests) is always preserved.
+
+## The Architecture at a Glance
+
+Before we dive into details, here's the big picture in one sentence:
+
+> **Applications send telemetry to gateway collectors, which buffer it in Kafka, where processor collectors consume it, apply sampling and enrichment, and write to specialized storage backends that Grafana queries for visualization.**
+
+That's the whole thing. If you understand that sentence, you understand the architecture. Everything else is details about how to make each piece reliable and scalable.
+
+Here's a simplified view:
 
 ```
-Single Collector: 50K events/sec max
-
-┌──────────────┐
-│  Collector   │ ← Bottleneck
-└──────────────┘
-
-Multiple Collectors: 50K × N events/sec
-
-        ┌───────────────┐
-        │ Load Balancer │
-        └───────┬───────┘
-    ┌───────────┼───────────┐
-    ▼           ▼           ▼
-┌────────┐ ┌────────┐ ┌────────┐
-│Coll. 1 │ │Coll. 2 │ │Coll. 3 │  = 150K events/sec
-└────────┘ └────────┘ └────────┘
+Applications → Gateways → Kafka → Processors → Storage → Grafana
+                 ↑                    ↑           ↑
+              (scale)             (sample)    (cheap S3)
 ```
 
-#### Problem 3: Resource Contention
+Now let's unpack each layer.
 
-**The Issue:**
+## The Five-Layer Architecture
 
-On a single node, components compete for resources:
-
-```
-Limited Resources (16 GB RAM, 8 CPU):
-
-┌─────────────────────────────────────────┐
-│ Prometheus │ Jaeger │ Loki │ Collector  │
-│   6 GB     │  4 GB  │ 3 GB │    2 GB    │
-└─────────────────────────────────────────┘
-         ↑
-         └── Heavy query starves other components
-```
-
-**The Solution:**
-
-Dedicated resources per component:
+Here's the complete picture:
 
 ```
-Dedicated Nodes:
-
-┌──────────┐  ┌──────────┐  ┌──────────┐
-│Prometheus│  │  Jaeger  │  │   Loki   │
-│  16 GB   │  │  16 GB   │  │  16 GB   │
-└──────────┘  └──────────┘  └──────────┘
-      ↑
-      └── Heavy query doesn't affect others
+                              YOUR APPLICATIONS
+                    (Instrumented with OpenTelemetry SDKs)
+                                    │
+                                    │ OTLP Protocol
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                     LAYER 1: INGESTION                               │
+    │                                                                      │
+    │    ┌─────────────────┐                                              │
+    │    │  Load Balancer  │  HAProxy, NGINX, or cloud LB                 │
+    │    │   (Port 4317)   │  Health-aware routing                        │
+    │    └────────┬────────┘                                              │
+    │             │                                                        │
+    │    ┌────────┼────────┬────────────────┐                             │
+    │    │        │        │                │                             │
+    │    ▼        ▼        ▼                ▼                             │
+    │ ┌──────┐ ┌──────┐ ┌──────┐       ┌──────┐                          │
+    │ │ GW 1 │ │ GW 2 │ │ GW 3 │  ...  │ GW N │  OTel Collector          │
+    │ │      │ │      │ │      │       │      │  (Gateway mode)           │
+    │ └──┬───┘ └──┬───┘ └──┬───┘       └──┬───┘                          │
+    │    │        │        │              │     Stateless                 │
+    │    │        │        │              │     Fast validation & batch   │
+    └────┼────────┼────────┼──────────────┼───────────────────────────────┘
+         │        │        │              │
+         └────────┴────────┴──────────────┘
+                           │
+                           ▼
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                     LAYER 2: BUFFERING                               │
+    │                                                                      │
+    │              ┌────────────────────────────┐                         │
+    │              │        Apache Kafka        │                         │
+    │              │                            │                         │
+    │              │  Topics:                   │                         │
+    │              │  • otlp-traces   (12 part) │                         │
+    │              │  • otlp-metrics  (12 part) │                         │
+    │              │  • otlp-logs     (12 part) │                         │
+    │              │                            │                         │
+    │              │  Replicated, durable       │                         │
+    │              │  24-hour retention         │                         │
+    │              └────────────────────────────┘                         │
+    │                                                                      │
+    │  Why Kafka?                                                          │
+    │  • Decouples ingestion from processing                              │
+    │  • Survives backend outages (data stays in Kafka)                   │
+    │  • Enables replay if you need to reprocess                          │
+    │  • Horizontal scaling via partitions                                │
+    └──────────────────────────────┬──────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                     LAYER 3: PROCESSING                              │
+    │                                                                      │
+    │    ┌────────────────┬────────────────┬────────────────┐             │
+    │    │                │                │                │             │
+    │    ▼                ▼                ▼                ▼             │
+    │ ┌──────┐        ┌──────┐        ┌──────┐        ┌──────┐           │
+    │ │ P1   │        │ P2   │        │ P3   │   ...  │ PN   │           │
+    │ │      │        │      │        │      │        │      │           │
+    │ │ ┌──┐ │        │ ┌──┐ │        │ ┌──┐ │        │ ┌──┐ │           │
+    │ │ │ T│ │        │ │ T│ │        │ │ T│ │        │ │ T│ │           │
+    │ │ │ M│ │        │ │ M│ │        │ │ M│ │        │ │ M│ │           │
+    │ │ │ L│ │        │ │ L│ │        │ │ L│ │        │ │ L│ │           │
+    │ │ └──┘ │        │ └──┘ │        │ └──┘ │        │ └──┘ │           │
+    │ └──────┘        └──────┘        └──────┘        └──────┘           │
+    │                                                                      │
+    │  OTel Collector (Processor mode)                                    │
+    │  Each processor handles:                                            │
+    │  • Sampling (keep all errors, sample 10% success)                   │
+    │  • Filtering (drop health checks, internal noise)                   │
+    │  • Enrichment (add K8s labels, environment info)                    │
+    │  • Batching (efficient writes to backends)                          │
+    └──────────────────────────────┬──────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                     LAYER 4: STORAGE                                 │
+    │                                                                      │
+    │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐             │
+    │  │   Tempo     │    │   Mimir     │    │    Loki     │             │
+    │  │  (Traces)   │    │  (Metrics)  │    │   (Logs)    │             │
+    │  │             │    │             │    │             │             │
+    │  │  TraceQL    │    │  PromQL     │    │  LogQL      │             │
+    │  │  queries    │    │  queries    │    │  queries    │             │
+    │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘             │
+    │         │                  │                  │                     │
+    │         └──────────────────┼──────────────────┘                     │
+    │                            │                                        │
+    │                            ▼                                        │
+    │              ┌────────────────────────────┐                         │
+    │              │      Object Storage        │                         │
+    │              │     (S3 / MinIO / GCS)     │                         │
+    │              │                            │                         │
+    │              │  • Hot data in local SSD   │                         │
+    │              │  • Cold data in S3 (cheap) │                         │
+    │              │  • Unlimited retention     │                         │
+    │              └────────────────────────────┘                         │
+    └──────────────────────────────┬──────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                     LAYER 5: VISUALIZATION                           │
+    │                                                                      │
+    │              ┌────────────────────────────┐                         │
+    │              │         Grafana            │                         │
+    │              │    (Multiple instances)    │                         │
+    │              │                            │                         │
+    │              │  • Unified dashboards      │                         │
+    │              │  • Trace exploration       │                         │
+    │              │  • Log search              │                         │
+    │              │  • Alerting                │                         │
+    │              └────────────────────────────┘                         │
+    │                            │                                        │
+    │                            ▼                                        │
+    │              ┌────────────────────────────┐                         │
+    │              │        PostgreSQL          │                         │
+    │              │    (Shared state for HA)   │                         │
+    │              │                            │                         │
+    │              │  Dashboards, users,        │                         │
+    │              │  alerts stored here        │                         │
+    │              └────────────────────────────┘                         │
+    └─────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Problem 4: Maintenance Downtime
-
-**The Issue:**
-
-Upgrading a single-node setup requires downtime:
-
-```
-1. Stop services (data collection stops)
-2. Pull new images
-3. Start services
-4. Wait for health checks
-
-Downtime: 1-5 minutes
-```
-
-**The Solution:**
-
-Rolling updates with zero downtime:
-
-```
-1. Add new node with updated version
-2. Drain traffic from old node
-3. Remove old node
-4. Repeat for each node
-
-Downtime: 0 minutes
-```
-
----
-
-# Part III: Target Architecture
-
-## Target Architecture
-
-### Design Principles
-
-Before diving into components, understand the principles guiding our architecture:
-
-| Principle | What It Means | How We Achieve It |
-|-----------|---------------|-------------------|
-| **Loose Coupling** | Components don't directly depend on each other | Message queue between ingestion and processing |
-| **Horizontal Scaling** | Add more instances to handle more load | Stateless collectors, partitioned queues |
-| **Graceful Degradation** | Partial failure doesn't mean total failure | Health checks, circuit breakers, fallbacks |
-| **Data Durability** | No data loss during failures or upgrades | Persistent queues, replication, object storage |
-| **Operational Simplicity** | Easy to understand, deploy, troubleshoot | Clear separation of concerns, standard tooling |
-
-### The Five-Layer Architecture
-
-```mermaid
-flowchart TB
-    subgraph L1["LAYER 1: INGESTION"]
-        direction LR
-        LB["🔄 Load Balancer<br/>━━━━━━━━━━━━━━━━<br/>HAProxy / NGINX<br/>AWS ALB / GCP LB"]
-        G1["Gateway 1"] & G2["Gateway 2"] & G3["Gateway N"]
-        LB --> G1 & G2 & G3
-    end
-    
-    subgraph L2["LAYER 2: BUFFERING"]
-        MQ[("📨 Message Queue<br/>━━━━━━━━━━━━━━━━━━━<br/>Kafka (high volume)<br/>Redis Streams (simple)")]
-    end
-    
-    subgraph L3["LAYER 3: PROCESSING"]
-        direction LR
-        TP["Trace<br/>Processors"] 
-        MP["Metric<br/>Processors"]
-        LP["Log<br/>Processors"]
-    end
-    
-    subgraph L4["LAYER 4: STORAGE"]
-        direction LR
-        T[("🔍 Tempo<br/>Traces")]
-        M[("📊 Mimir<br/>Metrics")]
-        L[("📝 Loki<br/>Logs")]
-        S3[("☁️ Object Storage<br/>S3 / MinIO / GCS")]
-    end
-    
-    subgraph L5["LAYER 5: VISUALIZATION"]
-        Graf["📈 Grafana HA<br/>━━━━━━━━━━━━━━<br/>PostgreSQL backend<br/>for shared state"]
-    end
-    
-    Apps["📱 Applications"] --> LB
-    G1 & G2 & G3 --> MQ
-    MQ --> TP & MP & LP
-    TP --> T
-    MP --> M
-    LP --> L
-    T & M & L --> S3
-    T & M & L --> Graf
-    
-    style L1 fill:#e8f5e9,stroke:#4caf50
-    style L2 fill:#fff3e0,stroke:#ff9800
-    style L3 fill:#e3f2fd,stroke:#2196f3
-    style L4 fill:#fce4ec,stroke:#e91e63
-    style L5 fill:#f3e5f5,stroke:#9c27b0
-```
-
-### Layer-by-Layer Explanation
-
-#### Layer 1: Ingestion
-
-**Purpose:** Receive telemetry from all applications reliably.
+### Layer 1: Ingestion — The Front Door
 
-**Components:**
+The ingestion layer is deliberately simple. Its job is to accept telemetry as fast as possible and get it into Kafka reliably.
 
-| Component | What It Does | Why We Need It |
-|-----------|--------------|----------------|
-| **Load Balancer** | Distributes traffic across gateways | No single point of failure, health-aware routing |
-| **Gateway Collectors** | Receive OTLP, validate, batch | Stateless, can scale horizontally |
+**Gateway Collectors** are OpenTelemetry Collectors configured in "gateway mode." They:
+- Accept OTLP over gRPC (port 4317) and HTTP (port 4318)
+- Perform minimal validation (is this valid OTLP?)
+- Batch data for efficient Kafka writes
+- Publish to appropriate Kafka topics
 
-**How it works:**
+Gateway collectors are stateless—they hold no data beyond what's in-flight. This makes them easy to scale: just add more instances behind the load balancer.
 
-1. Applications send OTLP data to load balancer VIP
-2. Load balancer routes to healthy gateway
-3. Gateway validates data, batches it
-4. Gateway publishes to message queue
+**The Load Balancer** distributes traffic across healthy gateways. It monitors gateway health and stops sending traffic to unhealthy instances. This is where you get your ingestion high availability.
 
-**Scaling:** Add more gateway instances behind the load balancer.
+For most deployments, HAProxy or NGINX works well. In Kubernetes, you can use a Service with multiple pod replicas. In cloud environments, you might use an ALB or NLB.
 
-#### Layer 2: Buffering
+**Scaling this layer:** If gateways are CPU-bound or network-bound, add more gateway instances. The load balancer automatically distributes traffic.
 
-**Purpose:** Decouple ingestion from processing; absorb traffic spikes.
+### Layer 2: Buffering — The Shock Absorber
 
-**Why a message queue?**
+This is arguably the most important layer for reliability. Kafka acts as a buffer between your high-speed ingestion layer and your (potentially slower or temporarily unavailable) processing layer.
 
-| Without Queue | With Queue |
-|---------------|------------|
-| Gateway waits for backend response | Gateway returns immediately |
-| Backend slowdown causes data loss | Data queued until backend recovers |
-| No replay capability | Can replay from any point |
-| Tight coupling | Loose coupling |
+**Why Kafka specifically?**
 
-**How it works:**
+We evaluated several options:
 
-1. Gateways publish to topic partitions
-2. Data is replicated across brokers (durability)
-3. Processors consume from assigned partitions
-4. Consumer offsets track progress
+| Option | Pros | Cons | Verdict |
+|--------|------|------|---------|
+| **Redis Streams** | Simple, low latency | Limited durability, memory-bound | Good for small scale |
+| **RabbitMQ** | Feature-rich, easy to use | Not designed for this throughput | Not suitable |
+| **Apache Pulsar** | Modern, cloud-native | Smaller community, more complex | Viable alternative |
+| **Apache Kafka** | Proven at massive scale, excellent durability | Operational complexity | Our choice |
 
-**Queue topic design:**
-```
-Topics (partitioned for parallelism):
-├── otlp-traces    (12 partitions, 24h retention)
-├── otlp-metrics   (12 partitions, 24h retention)
-└── otlp-logs      (12 partitions, 24h retention)
-```
+Kafka wins because:
+1. **Durability**: Data is written to disk and replicated across brokers. Losing a broker doesn't lose data.
+2. **Throughput**: A modest Kafka cluster handles millions of messages per second.
+3. **Replay**: Consumer groups track position independently. You can reprocess historical data.
+4. **Ecosystem**: Well-understood, widely deployed, lots of operational knowledge available.
 
-#### Layer 3: Processing
+**Topic design:**
 
-**Purpose:** Transform, sample, enrich, and route telemetry.
+We use three topics, one per signal type:
+- `otlp-traces` — Trace data (spans)
+- `otlp-metrics` — Metric data (counters, gauges, histograms)
+- `otlp-logs` — Log data
 
-**Processing functions:**
+Each topic has multiple partitions (12 is a good starting point) for parallel processing. Messages within a partition are ordered, but there's no ordering guarantee across partitions.
 
-| Function | What It Does | Example |
-|----------|--------------|---------|
-| **Sampling** | Keep subset of data intelligently | Keep all errors, 10% of success |
-| **Filtering** | Drop unwanted data | Remove health check traces |
-| **Enrichment** | Add metadata | Add Kubernetes pod labels |
-| **Transformation** | Modify attributes | Rename fields, convert formats |
-| **Routing** | Send to different backends | Errors to one store, debug to another |
-
-**How it works:**
-
-1. Processors consume from Kafka
-2. Apply configured processing pipelines
-3. Export to appropriate storage backend
-4. Commit offset after successful export
-
-**Scaling:** Add more processor instances (Kafka rebalances partitions).
-
-#### Layer 4: Storage
-
-**Purpose:** Persist telemetry for querying and long-term retention.
-
-**Why different backends for each signal?**
-
-Each telemetry type has unique access patterns:
-
-| Signal | Access Pattern | Best Storage Type |
-|--------|----------------|-------------------|
-| **Traces** | Lookup by trace ID, search by attributes | Document store, columnar |
-| **Metrics** | Time-range queries, aggregations | Time-series database |
-| **Logs** | Full-text search, time-range | Inverted index, append-only |
-
-**How it works:**
-
-1. Hot data stored locally for fast queries
-2. Older data flushed to object storage (cheap)
-3. Compaction reduces storage footprint
-4. Queries check both hot and cold storage
-
-#### Layer 5: Visualization
-
-**Purpose:** Unified interface for exploring and alerting on all data.
-
-**Components:**
-
-| Component | What It Does |
-|-----------|--------------|
-| **Grafana** | Dashboards, exploration, alerting |
-| **PostgreSQL** | Shared state for HA (dashboards, users, alerts) |
-
-**Why PostgreSQL for Grafana HA?**
-
-Default Grafana uses SQLite (local file). For HA:
-- Multiple Grafana instances need shared state
-- PostgreSQL provides this shared state
-- Any Grafana instance can serve any request
-
----
-
-## Technology Deep Dive
-
-### OpenTelemetry Collector
-
-**What is it?**
-
-The OTel Collector is a vendor-agnostic telemetry processing pipeline. Think of it as a Swiss Army knife for observability data.
-
-**Architecture:**
-
-```mermaid
-flowchart LR
-    subgraph Collector["OpenTelemetry Collector"]
-        subgraph Receivers["📥 Receivers"]
-            R1["OTLP"]
-            R2["Prometheus"]
-            R3["Jaeger"]
-            R4["Kafka"]
-        end
-        
-        subgraph Processors["⚙️ Processors"]
-            P1["batch"]
-            P2["memory_limiter"]
-            P3["filter"]
-            P4["attributes"]
-            P5["tail_sampling"]
-        end
-        
-        subgraph Exporters["📤 Exporters"]
-            E1["OTLP"]
-            E2["Prometheus"]
-            E3["Kafka"]
-            E4["Loki"]
-        end
-        
-        Receivers --> Processors --> Exporters
-    end
-```
-
-**Key capabilities:**
-
-| Capability | Description | Use Case |
-|------------|-------------|----------|
-| **Multi-protocol** | Receives OTLP, Jaeger, Zipkin, Prometheus, etc. | Accept data from any source |
-| **Pipeline processing** | Chain processors for complex transformations | Filter → Batch → Export |
-| **Persistent queue** | Write to disk before export | Survive restarts without data loss |
-| **Memory limiting** | Cap memory usage | Prevent OOM in constrained environments |
-| **Health checking** | Expose health endpoints | Kubernetes readiness/liveness probes |
-
-**Deployment patterns:**
-
-| Pattern | Description | When to Use |
-|---------|-------------|-------------|
-| **Agent** | Runs alongside application | Low latency, local buffering |
-| **Gateway** | Standalone service receiving from agents | Centralized processing |
-| **Sidecar** | Container in same pod as application | Kubernetes deployments |
-
-### Apache Kafka
-
-**What is it?**
-
-Kafka is a distributed event streaming platform. It acts as a durable, high-throughput message queue.
-
-**Why Kafka for observability?**
-
-| Feature | Benefit for Observability |
-|---------|---------------------------|
-| **Durability** | Data persisted to disk, survives broker restarts |
-| **Replication** | Data copied to multiple brokers, survives broker failure |
-| **High throughput** | Millions of messages/second |
-| **Replay** | Re-process data from any point in time |
-| **Partitioning** | Parallel processing across consumers |
-
-**Kafka concepts:**
-
-```mermaid
-flowchart TB
-    subgraph Kafka["Kafka Cluster"]
-        subgraph Topic["Topic: otlp-traces"]
-            P0["Partition 0"]
-            P1["Partition 1"]
-            P2["Partition 2"]
-        end
-        
-        B0["Broker 0<br/>Leader: P0"]
-        B1["Broker 1<br/>Leader: P1"]
-        B2["Broker 2<br/>Leader: P2"]
-    end
-    
-    subgraph Consumers["Consumer Group"]
-        C0["Consumer 0<br/>← P0"]
-        C1["Consumer 1<br/>← P1"]
-        C2["Consumer 2<br/>← P2"]
-    end
-    
-    P0 --> C0
-    P1 --> C1
-    P2 --> C2
-```
-
-| Concept | Description |
-|---------|-------------|
-| **Topic** | Named stream of messages (like a table) |
-| **Partition** | Ordered, immutable sequence within a topic |
-| **Broker** | Kafka server, stores partitions |
-| **Producer** | Writes messages to topics |
-| **Consumer** | Reads messages from topics |
-| **Consumer Group** | Set of consumers that share work |
+**Retention:** We typically configure 24-hour retention. This means you have 24 hours to recover from downstream problems before data is dropped. In practice, processing catches up within minutes, so this is very conservative.
 
 **Sizing guidance:**
+- 3 brokers handles ~100K events/sec comfortably
+- Add brokers and partitions to scale horizontally
+- Kafka's storage is cheap—don't be afraid of retention
 
-| Scale | Brokers | Partitions/Topic | Throughput |
-|-------|---------|------------------|------------|
-| Small | 3 | 6 | ~100K events/sec |
-| Medium | 5 | 12 | ~500K events/sec |
-| Large | 9+ | 24+ | 1M+ events/sec |
+### Layer 3: Processing — The Smart Filter
 
-### Grafana Tempo
+The processing layer is where intelligence happens. Processor collectors consume from Kafka, apply transformations, and export to storage backends.
 
-**What is it?**
+**Key processing functions:**
 
-Tempo is a distributed tracing backend that stores traces in object storage (S3, GCS, Azure Blob).
+**Tail-based sampling for traces:** This is crucial for cost control. Instead of keeping every trace, we keep:
+- All traces that contain an error
+- All traces that exceed a latency threshold (e.g., > 1 second)
+- A random 10% sample of remaining traces
 
-**Why Tempo over Jaeger?**
-
-| Feature | Jaeger | Tempo |
-|---------|--------|-------|
-| **Storage** | Cassandra, Elasticsearch, Badger | Object storage (S3) |
-| **Cost** | Higher (compute for queries) | Lower (object storage is cheap) |
-| **Scalability** | Complex (requires Cassandra/ES scaling) | Simple (just add storage) |
-| **Query** | By trace ID, search by tags | By trace ID, TraceQL |
-| **Retention** | Limited by storage cost | Unlimited (object storage is cheap) |
-
-**Architecture:**
-
-```mermaid
-flowchart TB
-    subgraph Tempo["Tempo"]
-        D["Distributor<br/>Receives spans"]
-        I["Ingester<br/>Batches & writes"]
-        C["Compactor<br/>Optimizes storage"]
-        Q["Querier<br/>Executes queries"]
-    end
-    
-    OC["OTel Collector"] --> D
-    D --> I
-    I --> S3[("Object Storage")]
-    C --> S3
-    Q --> S3
-    Q --> G["Grafana"]
-    
-    style S3 fill:#fff3e0,stroke:#ff9800
-```
-
-**Key features:**
-
-| Feature | Description |
-|---------|-------------|
-| **TraceQL** | Powerful query language for traces |
-| **Search** | Find traces by service, duration, status |
-| **Trace to logs** | Link from trace span to related logs |
-| **Trace to metrics** | Generate metrics from traces |
-
-### Grafana Mimir
-
-**What is it?**
-
-Mimir is a horizontally scalable, highly available Prometheus-compatible metrics backend.
-
-**Why Mimir over Prometheus?**
-
-| Feature | Prometheus | Mimir |
-|---------|------------|-------|
-| **Scalability** | Single node | Horizontally scalable |
-| **Storage** | Local disk | Object storage |
-| **HA** | Federation (complex) | Built-in replication |
-| **Retention** | Limited by disk | Unlimited |
-| **Query** | PromQL | PromQL (same!) |
-
-**Architecture:**
-
-```mermaid
-flowchart TB
-    subgraph Mimir["Mimir"]
-        D["Distributor<br/>Receives writes"]
-        I["Ingester<br/>Recent data (2h)"]
-        SC["Store Gateway<br/>Historical data"]
-        Q["Querier<br/>Executes queries"]
-        C["Compactor<br/>Optimizes blocks"]
-    end
-    
-    P["Prometheus<br/>(remote write)"] --> D
-    D --> I
-    I --> S3[("Object Storage")]
-    SC --> S3
-    C --> S3
-    Q --> I
-    Q --> SC
-    Q --> G["Grafana"]
-    
-    style S3 fill:#fff3e0,stroke:#ff9800
-```
-
-**Key features:**
-
-| Feature | Description |
-|---------|-------------|
-| **100% Prometheus compatible** | Same PromQL, same remote write API |
-| **Global view** | Query across all data, not federated |
-| **Long-term storage** | Years of retention at low cost |
-| **Multi-tenancy** | Isolate data by tenant |
-
-### Grafana Loki
-
-**What is it?**
-
-Loki is a log aggregation system designed to be cost-effective and easy to operate.
-
-**Why Loki over Elasticsearch?**
-
-| Feature | Elasticsearch | Loki |
-|---------|---------------|------|
-| **Indexing** | Full-text index (expensive) | Labels only (cheap) |
-| **Storage** | ~10x raw size | ~3x raw size |
-| **Query** | Lucene syntax | LogQL |
-| **Ops complexity** | High (JVM tuning, sharding) | Low |
-| **Cost** | High | Low |
-
-**How Loki works:**
-
-Loki only indexes **labels** (metadata), not log content. This is the key to its efficiency:
+This reduces trace storage by 80-90% while preserving all the traces you'd actually investigate.
 
 ```
-Traditional (Elasticsearch):
-Index every word → Huge index → High cost
+Example sampling policy:
 
-Loki approach:
-Index only labels → Small index → Low cost
-┌─────────────────────────────────────────────────┐
-│ Labels (indexed):                               │
-│   app=api, env=prod, pod=api-xyz123            │
-│                                                 │
-│ Content (NOT indexed, just compressed):         │
-│   "2024-01-15 10:00:00 User 123 logged in"     │
-└─────────────────────────────────────────────────┘
+Input: 100,000 traces
+├── 500 contain errors → Keep all 500 (0.5%)
+├── 2,000 are slow (>1s) → Keep all 2,000 (2%)
+└── 97,500 are normal, fast traces → Keep ~9,750 (10% sample)
+
+Output: ~12,250 traces (87.75% reduction)
+
+What you lose: Random successful, fast traces (which you'd never look at anyway)
+What you keep: Everything you'd actually investigate
 ```
 
-**Querying:**
-1. First filter by labels (fast, uses index)
-2. Then grep through matching chunks (slower, but fewer chunks)
+**Attribute enrichment:** Processors add context that's useful for querying:
+- Kubernetes metadata (namespace, deployment, pod name)
+- Environment labels (production, staging)
+- Service version information
 
-**Architecture:**
+**Filtering:** Remove telemetry that's noise:
+- Health check endpoints (high volume, low value)
+- Internal infrastructure requests
+- Debug logging in production
 
-```mermaid
-flowchart TB
-    subgraph Loki["Loki"]
-        D["Distributor<br/>Receives logs"]
-        I["Ingester<br/>Builds chunks"]
-        Q["Querier<br/>Executes queries"]
-        C["Compactor<br/>Merges chunks"]
-    end
-    
-    OC["OTel Collector"] --> D
-    D --> I
-    I --> S3[("Object Storage")]
-    Q --> I
-    Q --> S3
-    C --> S3
-    Q --> G["Grafana"]
-    
-    style S3 fill:#fff3e0,stroke:#ff9800
-```
-
-### Object Storage (S3/MinIO/GCS)
-
-**Why object storage?**
-
-| Benefit | Description |
-|---------|-------------|
-| **Cost** | ~$0.02/GB/month (vs. $0.10+ for SSD) |
-| **Durability** | 99.999999999% (11 nines) |
-| **Scalability** | Unlimited capacity |
-| **No management** | No disks to manage, replace, resize |
-
-**How it's used:**
-
-| Component | What It Stores | Access Pattern |
-|-----------|----------------|----------------|
-| **Tempo** | Trace blocks | Write once, read for queries |
-| **Mimir** | Metric blocks | Write once, read for queries |
-| **Loki** | Log chunks | Write once, read for queries |
-
-**Options:**
-
-| Option | When to Use |
-|--------|-------------|
-| **AWS S3** | Running on AWS |
-| **GCS** | Running on GCP |
-| **Azure Blob** | Running on Azure |
-| **MinIO** | On-premises (S3-compatible) |
-
----
-
-## Data Flow & Processing
-
-### End-to-End Data Flow
-
-Let's trace a request through the entire system:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as Application
-    participant SDK as OTel SDK
-    participant LB as Load Balancer
-    participant GW as Gateway Collector
-    participant K as Kafka
-    participant Proc as Processor Collector
-    participant Store as Tempo/Mimir/Loki
-    participant S3 as Object Storage
-    participant G as Grafana
-    
-    App->>SDK: Business logic executes
-    SDK->>SDK: Create spans, metrics, logs
-    SDK->>LB: OTLP/gRPC (batched)
-    LB->>GW: Route to healthy gateway
-    GW->>GW: Validate, enrich
-    GW->>K: Publish to topic
-    K->>K: Replicate to followers
-    K->>Proc: Consumer pulls batch
-    Proc->>Proc: Sample, transform
-    Proc->>Store: Write to backend
-    Store->>S3: Flush to object storage
-    G->>Store: Query data
-    Store->>G: Return results
-```
-
-### Processing Pipeline Example
-
-Here's how a trace flows through the processing pipeline:
-
-```
-INPUT: Raw span from application
-{
-  "trace_id": "abc123",
-  "span_id": "def456",
-  "name": "HTTP GET /api/users",
-  "duration_ms": 150,
-  "status": "OK",
-  "attributes": {
-    "http.method": "GET",
-    "http.url": "https://api.example.com/api/users?token=secret123",
-    "user.email": "john@example.com"
-  }
-}
-
-↓ STEP 1: Memory Limiter
-(Ensures collector doesn't OOM)
-
-↓ STEP 2: Attribute Processor
-(Remove sensitive data)
-{
-  ...
-  "attributes": {
-    "http.method": "GET",
-    "http.url": "https://api.example.com/api/users?token=REDACTED",
-    "user.email": "REDACTED"
-  }
-}
-
-↓ STEP 3: Resource Processor
-(Add infrastructure metadata)
-{
-  ...
-  "resource": {
-    "service.name": "api-service",
-    "k8s.pod.name": "api-service-xyz123",
-    "k8s.namespace": "production"
-  }
-}
-
-↓ STEP 4: Tail Sampling
-(Decision: Keep this span? Yes - it's a user-facing API)
-
-↓ STEP 5: Batch Processor
-(Combine with other spans for efficient export)
-
-OUTPUT: Enriched, sanitized span sent to Tempo
-```
-
-### Sampling Strategies
-
-**Why sample?**
-
-At high volumes, storing every trace is:
-- Expensive (storage costs)
-- Unnecessary (most traces are uninteresting)
-- Noisy (harder to find important traces)
-
-**Sampling approaches:**
-
-| Strategy | How It Works | Pros | Cons |
-|----------|--------------|------|------|
-| **Head sampling** | Decide at trace start (random %) | Simple, low overhead | Might miss interesting traces |
-| **Tail sampling** | Decide after trace completes | Can keep all errors | Higher memory, latency |
-| **Rate limiting** | Keep N traces per second | Predictable volume | Might drop during spikes |
-
-**Recommended tail sampling policy:**
-
-```
-Keep these traces (100%):
-├── All errors (status = ERROR)
-├── Slow traces (duration > 1 second)
-├── Traces with specific attributes (user.id = "vip")
-└── Random 10% of remaining
-```
-
-This gives you:
-- **All problems** (errors, slow requests)
-- **Representative sample** of normal traffic
-- **Predictable storage** costs
-
----
-
-## Infrastructure Requirements
-
-### Sizing Tiers
-
-| Tier | Events/sec | Applications | Team Size | Recommended Setup |
-|------|------------|--------------|-----------|-------------------|
-| **Starter** | <5K | 1-10 | 1-5 | Single-node Docker |
-| **Small** | 5K-20K | 10-50 | 5-20 | Single-node (optimized) |
-| **Medium** | 20K-100K | 50-200 | 20-50 | Multi-node + Kafka |
-| **Large** | 100K-500K | 200-1000 | 50-200 | Kubernetes cluster |
-| **Enterprise** | >500K | 1000+ | 200+ | Multi-cluster K8s |
-
-### Detailed Resource Requirements
-
-#### Starter/Small Tier (Single Node)
-
-| Component | CPU | Memory | Storage | Notes |
-|-----------|-----|--------|---------|-------|
-| OTel Collector | 2 cores | 2 GB | 20 GB (queue) | Persistent queue enabled |
-| Jaeger | 2 cores | 4 GB | 100 GB SSD | Badger storage |
-| Prometheus | 2 cores | 4 GB | 100 GB SSD | 30-day retention |
-| Loki | 1 core | 2 GB | 100 GB SSD | Filesystem storage |
-| Grafana | 1 core | 512 MB | 5 GB | Dashboards, SQLite |
-| **Total** | **8 cores** | **12.5 GB** | **325 GB SSD** | |
-
-**Recommended instance:** 8 vCPU, 16 GB RAM, 500 GB SSD
-**Cost estimate:** $100-200/month (cloud) or one-time $500-1000 (on-prem)
-
-#### Medium Tier (Multi-Node)
-
-| Component | Instances | CPU/each | Memory/each | Storage/each |
-|-----------|-----------|----------|-------------|--------------|
-| HAProxy | 2 | 1 core | 1 GB | 10 GB |
-| OTel Gateway | 3 | 2 cores | 2 GB | 20 GB |
-| Kafka | 3 | 2 cores | 8 GB | 200 GB SSD |
-| OTel Processor | 3 | 2 cores | 4 GB | 20 GB |
-| Tempo | 3 | 2 cores | 4 GB | 50 GB + S3 |
-| Mimir | 3 | 2 cores | 8 GB | 50 GB + S3 |
-| Loki | 3 | 2 cores | 4 GB | 50 GB + S3 |
-| Grafana | 2 | 1 core | 1 GB | 10 GB |
-| PostgreSQL | 1 | 2 cores | 4 GB | 50 GB SSD |
-
-**Total:** ~50 cores, ~120 GB RAM, ~1.5 TB SSD + object storage
-**Cost estimate:** $800-1,500/month (cloud)
-
-#### Large Tier (Kubernetes)
-
-| Component | Min Replicas | Max Replicas | CPU Request | Memory Request |
-|-----------|--------------|--------------|-------------|----------------|
-| OTel Gateway | 5 | 20 | 1 core | 2 GB |
-| OTel Processor | 5 | 20 | 2 cores | 4 GB |
-| Kafka | 5 | 9 | 4 cores | 8 GB |
-| Tempo (all-in-one) | 3 | 6 | 4 cores | 8 GB |
-| Mimir (all-in-one) | 3 | 6 | 4 cores | 16 GB |
-| Loki (all-in-one) | 3 | 6 | 2 cores | 8 GB |
-| Grafana | 3 | 6 | 1 core | 1 GB |
-
-**Kubernetes cluster:** 20-50 nodes, 4-8 cores each
-**Cost estimate:** $3,000-8,000/month (cloud managed K8s)
-
-### Storage Estimation Formula
-
-```
-Daily Storage (GB) = (Events/sec × 86,400 × Avg Size in KB) / (1,000,000 × Compression Ratio)
-```
-
-| Signal | Avg Event Size | Compression | 1K events/sec = GB/day |
-|--------|----------------|-------------|------------------------|
-| Traces | 1 KB | 10x | 8.6 GB |
-| Metrics | 0.1 KB | 15x | 0.6 GB |
-| Logs | 0.5 KB | 10x | 4.3 GB |
-
-**Example calculation:**
-
-```
-10K events/sec (50% traces, 30% metrics, 20% logs):
-
-Traces:  5,000/sec × 8.6 GB = 43 GB/day
-Metrics: 3,000/sec × 0.6 GB = 1.8 GB/day
-Logs:    2,000/sec × 4.3 GB = 8.6 GB/day
-─────────────────────────────────────────
-Total:                        ~54 GB/day
-                              ~1.6 TB/month
-                              ~19 TB/year (before sampling)
-```
-
-With 10% sampling on traces: ~500 GB/month
-
----
-
-## Security Architecture
-
-### Authentication Layers
-
-```mermaid
-flowchart TB
-    subgraph External["External (Untrusted)"]
-        Apps["Applications"]
-        Users["Users"]
-    end
-    
-    subgraph Edge["Edge (DMZ)"]
-        LB["Load Balancer<br/>TLS termination"]
-    end
-    
-    subgraph Internal["Internal (Trusted)"]
-        GW["Gateways<br/>mTLS"]
-        Kafka["Kafka<br/>SASL/mTLS"]
-        Storage["Storage<br/>mTLS"]
-        Grafana["Grafana<br/>OAuth2/OIDC"]
-    end
-    
-    Apps -->|"mTLS or API Key"| LB
-    LB -->|"mTLS"| GW
-    GW -->|"SASL"| Kafka
-    Kafka -->|"SASL"| Storage
-    Users -->|"OAuth2/OIDC"| Grafana
-    
-    style External fill:#ffcdd2
-    style Edge fill:#fff3e0
-    style Internal fill:#c8e6c9
-```
-
-### Authentication Methods by Layer
-
-| Layer | Method | How It Works |
-|-------|--------|--------------|
-| **App → Collector** | mTLS | Apps present client certificate |
-| **App → Collector** | API Key | Apps include key in header |
-| **Collector → Kafka** | SASL/SCRAM | Username/password authentication |
-| **Collector → Storage** | mTLS | Mutual TLS certificates |
-| **User → Grafana** | OAuth2/OIDC | SSO via identity provider |
-
-### Data Protection
-
-| Concern | Solution | Implementation |
-|---------|----------|----------------|
-| **Encryption in Transit** | TLS everywhere | Configure TLS on all services |
-| **Encryption at Rest** | Storage encryption | Enable S3/disk encryption |
-| **PII in Telemetry** | Attribute scrubbing | OTel processor removes sensitive fields |
-| **Access Control** | RBAC | Grafana roles, K8s RBAC |
-| **Audit Logging** | Access logs | Track who queried what |
-
-### Sensitive Data Handling
-
-**Problem:** Applications may accidentally include PII in telemetry:
-- Passwords in URLs
+**Sensitive data handling:** Remove or hash PII before it reaches storage:
 - Credit card numbers in logs
 - Email addresses in span attributes
+- API keys in HTTP headers
 
-**Solution:** OTel Collector processors filter sensitive data:
+**Scaling this layer:** Kafka consumer groups automatically rebalance partitions across processors. Add more processor instances, and Kafka distributes the load.
+
+### Layer 4: Storage — The Long-Term Memory
+
+Each telemetry signal has different access patterns, so we use different storage systems optimized for each.
+
+**Tempo for Traces**
+
+Tempo is Grafana's distributed tracing backend. We chose it over Jaeger for the scalable architecture because:
+
+- **Object storage native**: Tempo stores trace data directly in S3/MinIO. No need to manage Cassandra or Elasticsearch clusters.
+- **Cost efficient**: Object storage is dramatically cheaper than database storage.
+- **Simple operations**: Far fewer components to manage than Jaeger with Cassandra.
+- **TraceQL**: Powerful query language for finding traces by attributes.
+
+Tempo works by writing incoming traces to a local disk temporarily, then flushing completed blocks to object storage. Queries check both the recent data in memory and historical data in object storage.
+
+**Mimir for Metrics**
+
+Mimir is Grafana's horizontally scalable metrics backend. It's 100% Prometheus-compatible, so your existing PromQL queries and dashboards work unchanged.
+
+Why Mimir over plain Prometheus?
+
+- **Horizontal scaling**: Prometheus is single-node. Mimir distributes across many nodes.
+- **Long-term storage**: Prometheus stores on local disk. Mimir stores in object storage.
+- **Global view**: Query across all data, not federated queries across multiple Prometheus instances.
+
+For teams already using Prometheus, Mimir is a drop-in replacement that removes scaling limitations.
+
+**Loki for Logs**
+
+Loki is Grafana's log aggregation system. It takes a radically different approach from Elasticsearch:
+
+Elasticsearch indexes every word in every log line. This enables powerful full-text search but requires massive storage (10x+ the raw log size) and expensive compute.
+
+Loki indexes only labels (metadata) and stores log content as compressed chunks. Search works by first filtering by labels (fast), then scanning matching chunks (slower, but fewer chunks to scan).
+
+```
+Elasticsearch approach:
+┌────────────────────────────────────────────────────────────┐
+│ Index: "user" → doc1, doc7, doc15                          │
+│ Index: "logged" → doc1, doc5, doc9                         │
+│ Index: "in" → doc1, doc2, doc3, doc4, doc5...              │
+│ Index: "error" → doc3, doc8, doc12                         │
+│ ... (index entry for every word in every log)              │
+└────────────────────────────────────────────────────────────┘
+Storage: 10x raw log size
+
+Loki approach:
+┌────────────────────────────────────────────────────────────┐
+│ Index: {app="auth", level="error"} → chunk17, chunk23      │
+│ Index: {app="api", level="info"} → chunk1, chunk4, chunk8  │
+│ ... (index entry for each unique label combination)        │
+│                                                            │
+│ Chunks: compressed, stored in object storage               │
+└────────────────────────────────────────────────────────────┘
+Storage: 3x raw log size
+```
+
+The trade-off: Loki search is slower for "find all logs containing word X." But for observability use cases (find logs for service Y in the last hour with level=error), it's fast and dramatically cheaper.
+
+**Object Storage: The Cost Secret**
+
+All three backends (Tempo, Mimir, Loki) use object storage for long-term data. This is the key to our cost advantage.
+
+Object storage (S3, MinIO, GCS) costs about $0.02 per GB per month. Block storage costs $0.10+ per GB per month. Over terabytes of observability data, this difference is significant.
+
+Object storage also provides:
+- **Eleven nines durability** (99.999999999%)—your data won't disappear
+- **Unlimited capacity**—just keep adding data
+- **No disk management**—no RAID arrays, no disk replacements
+
+For on-premises deployments, MinIO provides S3-compatible object storage you can run yourself.
+
+### Layer 5: Visualization — The Single Pane of Glass
+
+Grafana ties everything together. It queries all three backends (Tempo, Mimir, Loki) through their respective data sources and presents a unified interface.
+
+**Why Grafana?**
+
+- **Native integration** with Tempo, Mimir, and Loki (all Grafana Labs projects)
+- **Trace-to-logs correlation**: Click a trace span, see related logs
+- **Explore mode**: Ad-hoc investigation without building dashboards first
+- **Mature alerting**: Alert on any metric or log pattern
+- **Large community**: Pre-built dashboards for common scenarios
+
+**High Availability for Grafana**
+
+Default Grafana uses SQLite for its own data (dashboards, users, alerts). For HA, we use PostgreSQL as a shared backend. Multiple Grafana instances can serve requests, any of which can access all dashboards and configuration.
+
+**What About Alerting?**
+
+Grafana's alerting engine evaluates rules and sends notifications. In an HA setup, you need to ensure alerts don't fire multiple times (once per Grafana instance). Grafana handles this with a distributed alert state stored in PostgreSQL—only one instance evaluates each alert rule at a time.
+
+For more sophisticated alerting, you might add Alertmanager (Prometheus's alert routing and deduplication system). It handles:
+- Grouping related alerts (all instances of same service)
+- Silencing during maintenance windows
+- Routing different alerts to different channels (PagerDuty for critical, Slack for warnings)
+- Deduplication across multiple sources
+
+---
+
+## How Data Actually Flows
+
+Understanding the data flow helps with debugging and capacity planning. When something isn't working, you can trace where in the pipeline the problem is occurring.
+
+Let me walk you through a concrete example. Your payment service processes an order, and here's what happens to the observability data:
+
+```
+1. Your Code Executes
+   ────────────────────────────────────────────────────────────
+   PaymentService.processPayment() runs
+   OTel SDK automatically creates spans for HTTP calls, DB queries
+   SDK batches telemetry locally (1-5 seconds)
+   
+2. SDK Sends to Collector
+   ────────────────────────────────────────────────────────────
+   OTLP/gRPC to load balancer:4317
+   Load balancer routes to healthy gateway
+   Gateway validates OTLP structure
+   Gateway batches for Kafka (1 second batches)
+   Gateway publishes to kafka:otlp-traces
+   
+   Latency so far: ~2-6 seconds
+   
+3. Kafka Persists and Replicates
+   ────────────────────────────────────────────────────────────
+   Broker 0 receives message (partition leader)
+   Replicates to Broker 1 and Broker 2
+   Acknowledges to gateway after replication
+   Message is now durable (survives broker failure)
+   
+4. Processor Consumes from Kafka
+   ────────────────────────────────────────────────────────────
+   Processor's Kafka receiver pulls batch from partition
+   Tail sampling evaluates trace:
+     - Is there an error? → Keep
+     - Duration > 1s? → Keep
+     - Neither? → 10% random sample
+   Attribute processor adds k8s metadata
+   Batch processor groups for efficient export
+   
+5. Processor Writes to Tempo
+   ────────────────────────────────────────────────────────────
+   OTLP/gRPC to Tempo distributor
+   Distributor forwards to appropriate ingester (based on trace ID hash)
+   Ingester holds trace in memory
+   After flush interval, ingester writes block to S3
+   
+   Latency so far: ~10-30 seconds
+   
+6. User Queries in Grafana
+   ────────────────────────────────────────────────────────────
+   User clicks "Find traces for payment-service, last 1 hour"
+   Grafana sends TraceQL query to Tempo
+   Tempo querier checks:
+     - Recent data in ingesters (last ~30 minutes)
+     - Historical data in S3 blocks
+   Results returned to Grafana
+   User clicks trace, sees full span tree
+   
+   Query latency: ~1-5 seconds for typical queries
+```
+
+The end-to-end latency from application code to queryable in Grafana is typically 10-30 seconds. For most use cases, this is perfectly acceptable.
+
+---
+
+## Sampling: The Economics of Observability
+
+I want to spend some time on sampling because it's often misunderstood, and getting it right dramatically affects your costs and the value you get from observability.
+
+### The Problem with Keeping Everything
+
+Let's do some math. Say you have:
+- 100 services
+- Each handling 100 requests/second
+- Each request generates 5 spans (inter-service calls, DB queries, etc.)
+
+That's 100 × 100 × 5 = 50,000 spans per second = 4.3 billion spans per day.
+
+At ~1KB per span, that's 4.3 TB of trace data per day, or 130 TB per month.
+
+Even with cheap object storage at $0.02/GB, that's $2,600/month just for trace storage. And you still need to process, index, and query this data.
+
+### The Insight: Most Traces Are Boring
+
+Here's the thing: 99% of your traces look exactly like each other. Successful request, normal latency, no errors. You don't need to keep all of them.
+
+What you actually investigate:
+- **Errors**: Always interesting, always worth keeping
+- **Slow requests**: Latency outliers indicate problems
+- **Specific users/requests**: When debugging a specific issue
+- **A representative sample**: To understand normal behavior
+
+### Tail-Based Sampling Strategy
+
+Our recommended sampling policy:
+
+```yaml
+policies:
+  # Policy 1: Keep all errors
+  # When something goes wrong, you need the trace
+  - name: keep-errors
+    type: status_code
+    status_code:
+      status_codes: [ERROR]
+    
+  # Policy 2: Keep slow traces
+  # Latency outliers often indicate problems
+  - name: keep-slow
+    type: latency
+    latency:
+      threshold_ms: 1000  # Adjust based on your SLOs
+    
+  # Policy 3: Keep traces for specific attributes
+  # VIP customers, beta features, etc.
+  - name: keep-vip
+    type: string_attribute
+    string_attribute:
+      key: customer.tier
+      values: [enterprise, premium]
+    
+  # Policy 4: Sample the rest
+  # Representative sample of normal traffic
+  - name: sample-rest
+    type: probabilistic
+    probabilistic:
+      sampling_percentage: 10
+```
+
+With this policy:
+- 100% of error traces are kept
+- 100% of slow traces are kept
+- 100% of VIP customer traces are kept
+- 10% of remaining (normal, fast) traces are kept
+
+Typical result: 80-90% reduction in trace volume while keeping everything you'd actually investigate.
+
+### Head vs. Tail Sampling
+
+**Head sampling** decides at the start of a trace: "Should I sample this?" The decision is made before you know if the trace will be interesting.
+
+**Tail sampling** waits until the trace is complete, then decides. This lets you keep all errors even if you're sampling 1% overall.
+
+The trade-off: Tail sampling requires holding incomplete traces in memory until they're complete (or a timeout is reached). This uses more memory but gives you much better sampling decisions.
+
+For observability, tail sampling is almost always the right choice.
+
+---
+
+## Security Considerations
+
+Observability data often contains sensitive information—user IDs, request parameters, internal service names, error messages with stack traces. You need to think about security from the start.
+
+### Protecting Data in Transit
+
+All communication between components should be encrypted. In practice, this means:
+
+**Application to Collector:** Your SDKs should connect to collectors over TLS. In internal networks, you might accept unencrypted traffic, but for anything crossing network boundaries, use TLS.
+
+```
+# Good: TLS for external traffic
+Application (external) → TLS → Load Balancer → Internal network
+
+# Acceptable: Plain OTLP within trusted network
+Application (internal) → Plain OTLP → Collector (same VPC)
+```
+
+**Between Components:** Within your observability cluster, traffic between collectors, Kafka, and backends should use TLS or be isolated in a private network. Most Kubernetes deployments rely on network policies rather than universal TLS, but it depends on your threat model.
+
+### Protecting Data at Rest
+
+**Object Storage:** Enable server-side encryption for S3/MinIO buckets. This is usually one configuration flag and protects against physical disk theft or accidental bucket exposure.
+
+**Kafka:** Enable encryption at rest if your Kafka data contains sensitive information. For most observability data, the 24-hour retention means the exposure window is limited, but encryption is still good practice.
+
+### Scrubbing Sensitive Data
+
+The most important security measure is ensuring sensitive data never reaches your observability backends in the first place. Use the OTel Collector's attribute processor to remove or redact sensitive fields:
 
 ```yaml
 processors:
   attributes:
     actions:
-      # Remove sensitive query parameters
-      - key: http.url
-        action: hash  # or delete
-      
-      # Redact specific fields
-      - key: user.email
+      # Remove sensitive headers
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
         action: delete
       
-      # Redact patterns (credit cards, SSNs)
-      - key: log.body
-        pattern: '\d{4}-\d{4}-\d{4}-\d{4}'
-        replacement: '[REDACTED]'
+      # Redact email addresses
+      - key: user.email
+        action: hash  # or delete
+      
+      # Remove query parameters from URLs
+      - key: http.url
+        pattern: '\?.*'
+        replacement: '?[REDACTED]'
+        action: update
 ```
 
-### Network Security
+This processing happens before data reaches Kafka, so sensitive information never persists anywhere.
 
-**Recommended network zones:**
+### Access Control
 
-| Zone | Components | Access |
-|------|------------|--------|
-| **Public** | None | Internet-facing |
-| **DMZ** | Load balancer | Apps can reach |
-| **Private** | All observability components | Internal only |
-| **Management** | SSH bastion, monitoring | Admins only |
+**Grafana:** Use your organization's identity provider (OIDC/OAuth2) for authentication. Configure team-based access to dashboards—not everyone needs to see everything.
 
-**Firewall rules:**
+**Backends:** Tempo, Mimir, and Loki all support multi-tenancy. You can separate data by team or environment, ensuring production and development data don't mix and teams only access their own data.
 
-| From | To | Port | Purpose |
-|------|----|----|---------|
-| Apps | Load Balancer | 4317, 4318 | OTLP ingestion |
-| Load Balancer | Gateways | 4317, 4318 | Internal routing |
-| Users | Grafana | 443 | Dashboard access |
-| Admins | Bastion | 22 | SSH access |
+**Infrastructure:** Use your cloud provider's IAM to restrict who can access the underlying infrastructure. The people who view dashboards shouldn't necessarily have SSH access to the collectors.
 
 ---
 
-## Cost Analysis
+## Common Mistakes to Avoid
 
-### Self-Hosted vs. Commercial Comparison
+After helping teams build observability platforms, I've seen the same mistakes repeatedly. Here's how to avoid them:
 
-| Scale | Self-Hosted Monthly | Datadog Monthly | New Relic Monthly | Savings |
-|-------|---------------------|-----------------|-------------------|---------|
-| 5K events/sec | $100 | $3,000 | $2,500 | 96-97% |
-| 20K events/sec | $300 | $12,000 | $10,000 | 97% |
-| 50K events/sec | $800 | $30,000 | $25,000 | 97% |
-| 100K events/sec | $2,000 | $60,000 | $50,000 | 96-97% |
-| 500K events/sec | $8,000 | $300,000 | $250,000 | 97% |
+### Mistake 1: Instrumenting Everything from Day One
 
-*Self-hosted costs include infrastructure only. Personnel costs for maintenance should be considered separately.*
+**The Problem:** Teams try to add traces, metrics, and logs to every service simultaneously. The project stalls because it's too big.
 
-### Cost Breakdown
+**The Fix:** Start with your most critical user-facing service. Get traces working for that service's main endpoints. Expand incrementally once you've proven value.
 
-| Category | % of Total | Main Drivers |
-|----------|------------|--------------|
-| **Compute** | 40-50% | Collector CPU, query processing |
-| **Storage** | 30-40% | Object storage, local SSD |
-| **Network** | 10-15% | Data transfer between components |
-| **Management** | 5-10% | Monitoring the monitoring |
+### Mistake 2: Keeping All Traces
 
-### Cost Optimization Strategies
+**The Problem:** Without sampling, trace storage costs explode. Teams either run out of budget or start dropping data randomly.
 
-| Strategy | Potential Savings | Implementation Effort | Risk |
-|----------|-------------------|----------------------|------|
-| **Tail sampling** | 50-80% | Low | Medium (might miss data) |
-| **Shorter retention** | 20-50% | Low | Low |
-| **Spot instances** | 60-80% compute | Medium | Medium (interruptions) |
-| **Object storage tiering** | 30-50% storage | Medium | Low |
-| **Metric cardinality reduction** | 20-50% | High | Medium |
-| **Log filtering** | 30-70% | Medium | Medium |
+**The Fix:** Implement tail-based sampling immediately. Keep 100% of errors, 100% of slow requests, sample the rest. You won't miss anything you'd actually investigate.
 
-### Total Cost of Ownership
+### Mistake 3: High-Cardinality Labels
 
-**Hidden costs to consider:**
+**The Problem:** Adding labels like `user_id` or `request_id` to metrics creates millions of unique time series. Prometheus/Mimir performance collapses.
 
-| Cost Type | Description | Estimate |
-|-----------|-------------|----------|
-| **Personnel** | Engineers maintaining the system | 0.25-0.5 FTE |
-| **Training** | Learning new technologies | One-time, 1-2 weeks |
-| **On-call** | Incident response | Part of existing on-call |
-| **Upgrades** | Quarterly maintenance | 1-2 days/quarter |
+**The Fix:** Use high-cardinality data in traces and logs, not metrics. Metrics should use low-cardinality labels (service name, environment, HTTP method, status code bucket). If you need per-user metrics, use exemplars (links from metrics to traces) instead.
 
-**Break-even analysis:**
+```
+# Bad: Creates one time series per user
+http_requests_total{user_id="12345"}  ← Millions of users = millions of series
 
-| Factor | Commercial | Self-Hosted |
-|--------|------------|-------------|
-| Monthly cost | $30,000 | $2,000 + $5,000 (0.25 FTE) |
-| Setup cost | Low | $10,000 (one-time) |
-| Break-even | N/A | ~2 months |
+# Good: Low cardinality, use traces for user-level detail
+http_requests_total{service="api", status="200"}  ← Dozens of combinations
+```
 
----
+### Mistake 4: Not Setting Resource Limits
 
-## Technology Decisions
+**The Problem:** A traffic spike causes the collector to consume all available memory, crashing other services on the same node.
 
-### Decision Matrix
+**The Fix:** Always set memory limits in Docker/Kubernetes. Use the memory_limiter processor in the collector to drop data gracefully before hitting the hard limit.
 
-| Decision | Options Considered | Choice | Rationale |
-|----------|-------------------|--------|-----------|
-| **Telemetry Standard** | OTel, Jaeger SDK, Vendor SDKs | OpenTelemetry | Vendor-neutral, future-proof |
-| **Message Queue** | Kafka, Redis, RabbitMQ, Pulsar | Kafka | Durability, throughput, ecosystem |
-| **Trace Storage** | Jaeger, Tempo, Zipkin | Tempo | Object storage, cost, simplicity |
-| **Metrics Storage** | Prometheus, Mimir, VictoriaMetrics, Thanos | Mimir | Scalability, Prometheus-compatible |
-| **Log Storage** | Loki, Elasticsearch, ClickHouse | Loki | Cost, simplicity, Grafana integration |
-| **Object Storage** | S3, MinIO, GCS | S3/MinIO | Cost, durability, compatibility |
-| **Visualization** | Grafana, Kibana, custom | Grafana | Unified view, community, features |
+### Mistake 5: Treating Observability as Optional
 
-### Trade-offs Acknowledged
+**The Problem:** Observability is added after launch. When the first production incident happens, there's no data to debug with.
 
-| Benefit We Get | Trade-off We Accept |
-|----------------|---------------------|
-| Cost savings (97%) | Need to maintain infrastructure |
-| Full control | Need to handle upgrades |
-| Unlimited customization | More decisions to make |
-| No vendor lock-in | No vendor support |
-| Data privacy | Self-managed security |
+**The Fix:** Observability is part of the definition of "done." No service goes to production without basic traces and metrics. It's much easier to add instrumentation during development than during a 2 AM outage.
 
-### Recommended Evolution Path
+### Mistake 6: Ignoring Your Own Observability Stack
 
-| Stage | Trigger | What Changes | Timeline |
-|-------|---------|--------------|----------|
-| **Start** | New deployment | Single-node Docker Compose | Day 1 |
-| **Stage 2** | >50K/sec OR HA needed | Add Kafka, multi-node | When needed |
-| **Stage 3** | K8s adoption | Helm deployment | When K8s available |
-| **Stage 4** | Multi-region | Geographic distribution | Enterprise scale |
+**The Problem:** The observability platform itself has no monitoring. When Kafka runs out of disk or a collector OOMs, you find out when dashboards go blank.
+
+**The Fix:** Monitor the monitoring. Set up alerts for:
+- Collector queue length (backing up)
+- Kafka consumer lag (processors falling behind)
+- Storage capacity (running out of space)
+- Component health (restarts, errors)
+
+Use a separate, simpler monitoring path for these critical alerts—even just Prometheus with local storage and PagerDuty integration.
+
+### Mistake 7: Skipping Structured Logging
+
+**The Problem:** Applications log unstructured text. Engineers spend time parsing strings instead of querying fields.
+
+**The Fix:** Log JSON from the start. Include trace_id in every log entry. Use consistent field names across services. The small upfront effort pays off enormously in debugging speed.
 
 ---
 
-## Appendix: Quick Reference
+# Part IV: Making Decisions
 
-### Capacity Planning Cheat Sheet
+## Technology Selection Rationale
 
-| Events/sec | Setup | Compute | Storage/month | Cost/month |
-|------------|-------|---------|---------------|------------|
-| <5K | Single Docker | 8 CPU, 16 GB | 100 GB | $50-100 |
-| 5K-20K | Single (optimized) | 16 CPU, 32 GB | 500 GB | $150-300 |
-| 20K-100K | Multi-node | 50 CPU, 120 GB | 2 TB + S3 | $800-1,500 |
-| 100K-500K | Kubernetes | 200 CPU, 500 GB | 10 TB S3 | $3,000-8,000 |
+Every technology choice in this architecture was a decision, not an inevitability. I want to share the reasoning so you can make informed choices for your own situation. Your constraints might lead to different conclusions.
+
+### OpenTelemetry Collector vs. Alternatives
+
+When we started, we asked: "What should sit between our applications and our backends?" We considered Fluentd (mature, widely used), Logstash (powerful, ELK integration), and Vector (modern, efficient). Here's why we landed on the OTel Collector:
+
+The fundamental issue is that Fluentd and Logstash were designed for logs. They've added trace support over time, but it's not native. The OTel Collector was designed from the ground up to handle all three signals—traces, metrics, and logs—as first-class citizens.
+
+More importantly, the Collector speaks OTLP natively. Since our applications use OpenTelemetry SDKs that output OTLP, there's no protocol translation needed. With Fluentd or Logstash, we'd need to convert OTLP to their internal format and back, adding complexity and potential failure modes.
+
+| Factor | OTel Collector | Fluentd/Logstash | Vector |
+|--------|----------------|------------------|--------|
+| **Protocol support** | Native OTLP, plus many others | Log-focused, trace support varies | Good protocol support |
+| **Trace handling** | First-class (spans, traces, sampling) | Limited/None | Good but less mature |
+| **Metrics handling** | Native OTLP + Prometheus | Limited | Good |
+| **Community** | CNCF, massive momentum | Mature, stable | Growing |
+| **Configuration** | YAML, declarative | Ruby (Fluentd) or JSON (Logstash) | TOML, declarative |
+
+Vector deserves special mention—it's technically excellent, well-designed, and performs well. If you already have Vector in your stack, it can work. But for a greenfield observability deployment, the Collector's native OTLP support and CNCF backing make it the natural choice.
+
+### Tempo vs. Jaeger: The Storage Question
+
+This decision came down to a practical question: "How do we want to store traces at scale?"
+
+Jaeger is a fantastic project. It's battle-tested, well-documented, and the all-in-one deployment is perfect for getting started. We use it for Phase 1 (single-node) deployments.
+
+But Jaeger's distributed deployment options—Cassandra or Elasticsearch as storage backends—require managing another complex distributed system. Cassandra clusters need care and feeding. Elasticsearch clusters need JVM tuning, shard management, and index lifecycle policies. These are operational burdens we didn't want.
+
+Tempo takes a different approach: store everything in object storage (S3). No database cluster to manage. S3 is effectively infinitely scalable, highly durable, and cheap. The trade-off is that Tempo can't do arbitrary searches the way Jaeger with Elasticsearch can—but for observability use cases (find trace by ID, find traces by service and time range), it works well.
+
+| Factor | Jaeger | Tempo |
+|--------|--------|-------|
+| **Storage options** | Badger, Cassandra, Elasticsearch | Object storage (S3) |
+| **Operational complexity** | Low (all-in-one) to High (distributed) | Low (object storage is simple) |
+| **Cost at scale** | Higher (Cassandra/ES clusters expensive) | Lower (S3 is cheap) |
+| **Query capabilities** | Tag search, trace by ID | TraceQL (more powerful) |
+| **Grafana integration** | Good | Native |
+
+For the scalable architecture, Tempo's object storage model is a better fit. You don't need to manage database clusters.
+
+### Mimir vs. Prometheus: The Scaling Question
+
+Prometheus is the gold standard for metrics. It's reliable, well-understood, and has an enormous ecosystem. For single-node deployments, it's perfect.
+
+The challenge is scaling. Prometheus is fundamentally single-node. When you outgrow one instance, your options are:
+
+1. **Federation**: Run multiple Prometheus servers, query them through a central instance. Works, but federated queries are slow and complex to manage.
+
+2. **Thanos**: Add sidecar components to Prometheus that enable long-term storage in S3 and global querying. Good option if you're already running Prometheus and want an upgrade path.
+
+3. **Mimir**: Purpose-built for horizontal scaling. Effectively "Cortex 2.0" (Cortex was the original CNCF scalable Prometheus project, now sunset in favor of Mimir).
+
+We chose Mimir because it was designed for horizontal scaling from the start, uses object storage natively, and comes from Grafana Labs (ensuring tight integration with our visualization layer). If you already have Prometheus and just need HA without massive scale, Thanos is a pragmatic upgrade path.
+
+| Factor | Prometheus | Thanos | Cortex | Mimir |
+|--------|------------|--------|--------|-------|
+| **Scalability** | Single node | Adds HA to Prometheus | Horizontally scalable | Horizontally scalable |
+| **Long-term storage** | Local disk | Object storage | Object storage | Object storage |
+| **Operational complexity** | Low | Medium (sidecars, querier) | High | Medium |
+| **Maturity** | Very mature | Mature | Mature | Newer (Grafana Labs) |
+| **PromQL compatible** | Native | Yes | Yes | Yes |
+
+### Loki vs. Elasticsearch: The Indexing Trade-off
+
+This is perhaps the most opinionated choice in our stack. Elasticsearch is powerful, flexible, and industry-standard. So why Loki?
+
+It comes down to how you use logs. If you're building a product that searches arbitrary text (like a log analytics SaaS, or searching email content), Elasticsearch's full-text indexing is essential. But for debugging production issues, you almost always know what you're looking for:
+
+- "Show me logs from the payment service in the last hour"
+- "Show me error logs from production"
+- "Show me logs containing this trace ID"
+
+For these queries, you don't need full-text indexing. You need efficient filtering by metadata (labels), followed by scanning the matching log content.
+
+Loki's approach—index only labels, store content as compressed chunks—is dramatically cheaper. We've seen 10x cost reductions compared to Elasticsearch for similar log volumes. The trade-off is that pure text search ("find all logs containing 'NullPointerException'") requires scanning more data. But structured logging with proper labels largely eliminates this need.
+
+| Factor | Elasticsearch | Loki |
+|--------|---------------|------|
+| **Indexing** | Full-text (every word) | Labels only |
+| **Storage cost** | ~10x raw data | ~3x raw data |
+| **Query flexibility** | Very flexible (Lucene) | Label filtering + grep |
+| **Operational complexity** | High (JVM tuning, sharding) | Low |
+| **Best for** | General-purpose search | Observability logs |
+
+### Kafka vs. Alternatives: The Durability Question
+
+The message queue layer is what turns "direct export" into "reliable pipeline." When a backend is temporarily unavailable, the queue holds data until it recovers. This is essential for production reliability.
+
+We chose Kafka because durability is non-negotiable for us. When a message is acknowledged by Kafka, it's written to disk and replicated to multiple brokers. Hardware failure, process crash, network partition—the data survives.
+
+Redis Streams is simpler to operate and performs well. For smaller deployments where you can accept some data loss during failures, it's a legitimate choice. RabbitMQ, while excellent for other use cases, wasn't designed for the high-throughput, persistent streaming that observability requires.
+
+Apache Pulsar is technically excellent and arguably more modern than Kafka. If you're already running Pulsar, use it. But Kafka's ecosystem, community knowledge, and operational tooling are more mature.
+
+| Factor | Kafka | Redis Streams | RabbitMQ | Pulsar |
+|--------|-------|---------------|----------|--------|
+| **Durability** | Excellent (replicated disk) | Good (with persistence) | Good | Excellent |
+| **Throughput** | Very high | High | Moderate | Very high |
+| **Replay capability** | Excellent | Limited | None | Excellent |
+| **Operational complexity** | Medium | Low | Low | High |
+| **Community/Ecosystem** | Very large | Large | Large | Growing |
+
+We chose Kafka for its durability, throughput, and replay capabilities. For smaller deployments, Redis Streams is a simpler alternative.
+
+---
+
+## Cost Analysis: What Will This Actually Cost?
+
+Let's be concrete about costs. I'll use AWS pricing, but the ratios are similar on other clouds.
+
+### Single-Node Deployment (Phase 1)
+
+For a team processing ~10,000 events/second:
+
+| Component | Instance Type | Monthly Cost |
+|-----------|--------------|--------------|
+| Single server | c5.2xlarge (8 vCPU, 16GB) | $245 |
+| Storage | 500GB gp3 SSD | $40 |
+| **Total** | | **~$285/month** |
+
+What you get:
+- Full traces, metrics, and logs
+- 30 days retention
+- Grafana dashboards and alerting
+- Good enough for most small-medium teams
+
+### Multi-Node Deployment (Phase 2)
+
+For a team processing ~50,000 events/second:
+
+| Component | Instances | Monthly Cost |
+|-----------|-----------|--------------|
+| HAProxy | 2 × t3.small | $30 |
+| Gateway collectors | 3 × c5.large | $220 |
+| Kafka brokers | 3 × r5.large (16GB RAM) | $380 |
+| Processor collectors | 3 × c5.large | $220 |
+| Tempo | 3 × c5.large | $220 |
+| Mimir | 3 × r5.large | $380 |
+| Loki | 3 × c5.large | $220 |
+| Grafana | 2 × t3.medium | $60 |
+| PostgreSQL | 1 × db.t3.medium | $50 |
+| Object storage (S3) | ~2TB | $50 |
+| **Total** | | **~$1,830/month** |
+
+### Enterprise-Scale Deployment (5,000+ Hosts)
+
+This is where the economics become impossible to ignore. Let me share real numbers from enterprise deployments.
+
+**The Datadog Reality at Scale:**
+
+When you're monitoring 5,000+ hosts with full infrastructure monitoring, APM, and log management, commercial solutions like Datadog can easily exceed **$1.5 million per year**. Here's how that breaks down:
+
+| Component | Hosts/Volume | Datadog Pricing | Annual Cost |
+|-----------|--------------|-----------------|-------------|
+| Infrastructure monitoring | 5,000 hosts | ~$15-23/host/month | $900K - $1.38M |
+| APM (traces) | 5,000 hosts | ~$31-40/host/month | $1.86M - $2.4M |
+| Log management | 500GB/day ingestion | ~$0.10/GB ingested + retention | $200K - $400K |
+| **Total (typical bundle)** | | | **$1.5M - $2.5M/year** |
+
+*Note: Datadog offers volume discounts and custom enterprise agreements. Real pricing varies based on negotiation, commitment length, and specific feature mix. These figures represent typical enterprise quotes we've seen.*
+
+**The same scale with self-hosted:**
+
+| Component | Specification | Monthly Cost |
+|-----------|---------------|--------------|
+| **Ingestion Layer** | | |
+| HAProxy (HA pair) | 2 × c5.xlarge | $250 |
+| Gateway collectors | 10 × c5.2xlarge | $2,450 |
+| **Buffering Layer** | | |
+| Kafka cluster | 5 × r5.2xlarge (64GB each) | $3,200 |
+| **Processing Layer** | | |
+| Processor collectors | 8 × c5.2xlarge | $1,960 |
+| **Storage Layer** | | |
+| Mimir cluster | 6 × r5.2xlarge | $3,840 |
+| Tempo cluster | 4 × c5.2xlarge | $980 |
+| Loki cluster | 6 × c5.2xlarge | $1,470 |
+| **Visualization** | | |
+| Grafana (HA) | 3 × c5.large | $220 |
+| PostgreSQL (RDS) | db.r5.large | $180 |
+| **Object Storage** | | |
+| S3 storage | ~20TB/month | $500 |
+| S3 requests | ~100M requests/month | $50 |
+| **Networking** | | |
+| Data transfer | ~5TB/month | $450 |
+| **Total Infrastructure** | | **~$15,550/month** |
+| **Annual Infrastructure** | | **~$186,600/year** |
+
+**Add engineering costs for a realistic comparison:**
+
+| Cost Category | Self-Hosted | Datadog |
+|---------------|-------------|---------|
+| Infrastructure | $186,600 | $0 (included) |
+| Engineering (1 FTE dedicated) | $180,000 | $0 |
+| On-call premium | $20,000 | $0 |
+| Training (amortized) | $15,000 | $5,000 |
+| **Total Annual Cost** | **~$400,000** | **~$1,500,000+** |
+| **5-Year Total Cost** | **~$2,000,000** | **~$7,500,000+** |
+
+**The savings at enterprise scale: $1.1 million per year, or $5.5 million over 5 years.**
+
+Even with a dedicated full-time engineer and generous overhead estimates, self-hosted saves over 70% at this scale. That's not a rounding error—that's the budget for an entire engineering team.
+
+### Why Commercial Pricing Explodes at Scale
+
+It's worth understanding why commercial solutions become so expensive at scale:
+
+**Per-host pricing models:** Datadog, Dynatrace, and others charge per host. This seemed reasonable when companies had 50 servers, but in the era of Kubernetes where you might run 5,000 pods across 500 nodes, the math breaks down. You're paying the same per-host fee for a 2-vCPU pod as for a 96-vCPU bare metal server.
+
+**Log ingestion pricing:** Commercial log platforms charge by volume ingested. At enterprise scale with hundreds of services, logs can easily hit 500GB-1TB per day. At $0.10/GB, that's $50-100 per day just for ingestion, before retention costs.
+
+**Feature bundling:** You often need multiple products (Infrastructure, APM, Logs, Synthetics) that each have their own pricing. What looks like $15/host becomes $50+/host when you add everything.
+
+**The "success tax":** As your company grows and succeeds, your observability bill grows proportionally—often faster than your revenue. This creates perverse incentives to reduce observability coverage exactly when you need it most.
+
+**Self-hosted scales differently:**
+- Object storage costs ~$0.02/GB/month regardless of who wrote the data
+- Adding hosts means adding metrics, but Mimir handles millions of series efficiently
+- Log volume is compressed and stored cheaply, not priced per-GB ingested
+- Your observability cost grows with actual resource usage, not host count
+
+### Real-World Enterprise Comparison
+
+Here's a concrete example comparing three approaches for a 5,000-host deployment:
+
+```
+                    Commercial         Self-Hosted         Self-Hosted
+                    (Datadog)          (Phase 2)           (Phase 3/K8s)
+                    ─────────────      ──────────────      ──────────────
+Year 1 Cost         $1,500,000         $500,000            $450,000
+                                       (includes setup)
+                    
+Year 2-5 Cost       $1,500,000/yr      $350,000/yr         $300,000/yr
+                    
+5-Year Total        $7,500,000         $1,900,000          $1,650,000
+                    
+Savings vs DD       —                  $5,600,000          $5,850,000
+                                       (75% savings)        (78% savings)
+
+Engineering FTE     0                  1.0                 1.5
+Required
+
+Time to             Days               Months              Months
+Production
+
+Customization       Limited            Full                Full
+
+Data Residency      Vendor cloud       Your control        Your control
+```
+
+**The bottom line:** At enterprise scale, self-hosted observability isn't just a cost optimization—it's a strategic decision that can save millions of dollars while giving you complete control over your data and unlimited customization.
+
+### Cost Comparison at Medium Scale
+
+At 50,000 events/second (~500 hosts):
+
+| Solution | Monthly Cost | Annual Cost |
+|----------|--------------|-------------|
+| **Self-hosted (our architecture)** | $1,830 | $22,000 |
+| **Datadog** | $25,000-40,000 | $300,000-480,000 |
+| **New Relic** | $20,000-30,000 | $240,000-360,000 |
+| **Splunk** | $30,000-50,000 | $360,000-600,000 |
+
+Even accounting for engineering time to maintain the self-hosted solution (say, 0.25 FTE at $150K/year = $37,500), you're still saving 85-95% at medium scale.
+
+### Hidden Costs to Consider
+
+Be honest about the full cost:
+
+| Cost Type | Estimate | Notes |
+|-----------|----------|-------|
+| **Initial setup** | 2-4 weeks engineering time | One-time |
+| **Ongoing maintenance** | 0.25 FTE | Updates, troubleshooting, optimization |
+| **Training** | 1-2 weeks per engineer | Learning the stack |
+| **On-call** | Part of existing rotation | Monitoring the monitoring |
+| **Upgrades** | 1-2 days per quarter | Coordinated updates |
+
+If your team is stretched thin and can't dedicate any time to infrastructure, a managed solution might be worth the cost. But for most engineering organizations, the cost savings justify the investment.
+
+---
+
+## The Real Human Cost: What You're Signing Up For
+
+Let me be brutally honest about what running your own observability infrastructure actually entails. The dollar savings are real, but so is the work. You deserve to know exactly what you're getting into before you commit.
+
+### The Operational Reality
+
+**This is not "set and forget."** Unlike a SaaS solution where you install an agent and walk away, self-hosted observability requires ongoing attention. Here's what a typical month looks like:
+
+```
+Week 1:
+├── Monday: Review weekend alerts, check disk usage trends
+├── Wednesday: Investigate slow Grafana queries, optimize dashboard
+└── Friday: Apply security patches to collector images
+
+Week 2:
+├── Tuesday: Kafka disk filling up faster than expected
+│            Investigate: one team started logging request bodies
+│            Resolution: Add log filtering, educate team
+└── Thursday: Prometheus scrape targets failing health checks
+             Root cause: Network policy change by platform team
+
+Week 3:
+├── Monday: Quarterly review - plan capacity for next quarter
+├── Wednesday: Test backup restoration (it's been 90 days)
+└── Friday: Update Grafana dashboards for new service
+
+Week 4:
+├── Tuesday: On-call page: Loki ingestion rate limit hit
+│            3 AM investigation, increase limits, identify noisy service
+└── Thursday: Post-incident review, update runbooks
+```
+
+This is real. Some months are quiet; others feel like you're constantly firefighting. On average, expect **8-15 hours per week** of active attention from someone on your team, plus **occasional intense incidents** that consume entire days.
+
+### Specific Operational Tasks You'll Own
+
+Let me break down exactly what "operational responsibility" means in practice:
+
+**Daily/Automated (but you still need to check):**
+- Health check alerts firing or not firing
+- Disk space trending (all components)
+- Consumer lag in Kafka (processors keeping up?)
+- Error rates in collector exports
+
+**Weekly:**
+- Review collector metrics for anomalies
+- Check query performance trends
+- Verify backup jobs completed
+- Review resource utilization vs. limits
+
+**Monthly:**
+- Capacity planning review
+- Security vulnerability scanning
+- Cost optimization review (right-sized instances?)
+- Documentation updates
+
+**Quarterly:**
+- Component version upgrades
+- Backup restoration testing
+- Disaster recovery drills
+- Performance baseline comparison
+
+**Annually:**
+- Major version migrations (Kafka 3.x → 4.x, etc.)
+- Architecture review (still right-sized?)
+- Retention policy review
+- Cost model validation
+
+### The Skills You Need On Your Team
+
+This isn't just "someone who knows Docker." You need:
+
+| Skill | Why It's Needed | Minimum Competency |
+|-------|-----------------|-------------------|
+| **Linux systems** | Debugging, performance tuning | Comfortable with strace, iostat, memory analysis |
+| **Networking** | Connectivity issues, load balancing | DNS, TCP/IP, TLS certificates, firewalls |
+| **Kafka** | The most operationally complex component | Topic management, consumer groups, broker operations |
+| **Prometheus/PromQL** | Query optimization, cardinality issues | Write and debug complex queries |
+| **Grafana** | Dashboard design, alerting rules | Create dashboards, manage data sources |
+| **Object storage** | Cost optimization, lifecycle policies | S3 API, IAM policies |
+| **Kubernetes** (Phase 3) | Everything gets more complex | Deployments, HPA, PDBs, debugging |
+
+If no one on your team has these skills, you're either going to develop them (6-12 months to competency) or hire for them.
+
+### The Incidents You'll Face
+
+Here are real incidents I've seen teams deal with. Each one took hours to days to resolve:
+
+**"Disk filled up overnight"**
+- Cause: A deployment bug caused one service to log at 10x normal rate
+- Impact: Loki stopped ingesting, missed 4 hours of logs
+- Resolution time: 3 hours (identify, fix, recover)
+- Prevention: Better rate limiting, faster alerting
+
+**"Queries timing out"**
+- Cause: High-cardinality metric (user_id as label) created 2M time series
+- Impact: Prometheus OOM, dashboards broken for 2 hours
+- Resolution time: 6 hours (identify culprit, relabel, compact)
+- Prevention: Cardinality monitoring, label review process
+
+**"Data loss during upgrade"**
+- Cause: Kafka broker upgrade went wrong, partition leadership issues
+- Impact: Lost 30 minutes of traces during recovery
+- Resolution time: 4 hours
+- Prevention: Better upgrade runbook, staging environment testing
+
+**"Can't correlate traces and logs"**
+- Cause: Clock skew between application servers and collectors
+- Impact: Debugging efficiency dropped significantly
+- Resolution time: 8 hours to identify, 2 hours to fix NTP
+- Prevention: Clock monitoring, NTP hardening
+
+**"Grafana is slow"**
+- Cause: Dashboard with 50 panels, each querying 30 days of data
+- Impact: Grafana unusable during business hours
+- Resolution time: 2 days (query optimization, dashboard redesign)
+- Prevention: Dashboard review process, query guidelines
+
+These aren't rare events. Expect 1-2 significant incidents per quarter minimum.
+
+### What You Give Up vs. Commercial Solutions
+
+Let me compare specific features, not just price:
+
+| Capability | Self-Hosted | Datadog | Dynatrace | New Relic |
+|------------|-------------|---------|-----------|-----------|
+| **Setup time** | 2-4 weeks | Hours | Hours | Hours |
+| **AI/ML anomaly detection** | DIY or none | Built-in | Industry-leading | Good |
+| **Auto-instrumentation** | Manual config | Agent-based (excellent) | Best in class | Good |
+| **APM correlation** | Manual | Automatic | Automatic | Automatic |
+| **RUM (Real User Monitoring)** | Separate tool | Included | Included | Included |
+| **Synthetic monitoring** | Separate tool | Included | Included | Included |
+| **Log pattern analysis** | Manual | ML-powered | ML-powered | ML-powered |
+| **Mobile APM** | Not available | Included | Included | Included |
+| **Infrastructure maps** | Basic | Beautiful | Excellent | Good |
+| **Database monitoring** | DIY | Included | Deep integration | Included |
+| **SLO management** | Manual | Built-in | Built-in | Built-in |
+| **Incident management** | Integrate PagerDuty | Built-in | Built-in | Built-in |
+| **On-call support** | Community/forums | 24/7 enterprise | 24/7 enterprise | 24/7 enterprise |
+| **Compliance certs** | You manage | SOC2, HIPAA, etc. | SOC2, HIPAA, etc. | SOC2, HIPAA, etc. |
+
+**The honest truth:** Commercial tools are genuinely better in many ways. They have hundreds of engineers building features. Their auto-instrumentation is magical. Their ML catches things you'd never notice. If budget weren't a constraint, many of these tools would be the right choice.
+
+### Total Cost of Ownership: The Full Picture
+
+Let's build a realistic TCO model for a medium-scale deployment (50K events/sec):
+
+**Commercial Solution (Datadog as example):**
+
+| Cost Category | Annual Cost |
+|---------------|-------------|
+| APM (traces) | $120,000 |
+| Infrastructure monitoring | $48,000 |
+| Log management (100GB/day) | $180,000 |
+| Synthetics, RUM, etc. | $24,000 |
+| **Total** | **$372,000/year** |
+
+*Note: These are rough estimates. Actual Datadog pricing varies significantly based on negotiation, commitment, and usage patterns.*
+
+**Self-Hosted Solution:**
+
+| Cost Category | Annual Cost |
+|---------------|-------------|
+| Infrastructure (AWS) | $22,000 |
+| Engineering time (0.5 FTE × $180K) | $90,000 |
+| Training (one-time, amortized over 3 years) | $10,000 |
+| Incident response time (50 hrs × $100/hr) | $5,000 |
+| Opportunity cost (features not built) | Hard to quantify |
+| **Total quantifiable** | **~$127,000/year** |
+
+**The math:** Self-hosted saves ~$245,000/year in this scenario. That's real money—enough to hire two additional engineers.
+
+**But consider:**
+- What if that 0.5 FTE was building product features instead?
+- What if an incident causes customer-facing impact?
+- What if key infrastructure person leaves?
+- What's the cost of slower debugging without ML features?
+
+These are the questions you need to answer for your specific situation.
+
+### The Hidden Advantages of Commercial Solutions
+
+In fairness to Datadog, Dynatrace, and others, here's what they do exceptionally well:
+
+**1. Time to Value**
+- Install agent, see data in minutes
+- Pre-built dashboards for every common technology
+- No architecture decisions required
+
+**2. Continuous Innovation**
+- New features every month
+- You benefit without any work
+- AI/ML capabilities improving constantly
+
+**3. Unified Experience**
+- One tool for everything (APM, infra, logs, RUM, synthetics)
+- Consistent UI/UX across all features
+- Single vendor relationship
+
+**4. Enterprise Features**
+- SSO/SAML integration out of the box
+- Role-based access control
+- Audit logging
+- Compliance certifications
+
+**5. Support**
+- Someone to call when things break
+- Professional services for complex setups
+- Training and certification programs
+
+### When Commercial Solutions Are the Right Choice
+
+Be honest with yourself. Choose a commercial solution if:
+
+**Your team is small (<5 engineers)**
+The operational overhead will consume too much of your capacity. You need those people building product.
+
+**Observability isn't core to your business**
+If you're a fintech building payment products, your competitive advantage isn't in running Kafka clusters. Let someone else do it.
+
+**You need enterprise compliance**
+SOC2, HIPAA, PCI compliance for your observability platform requires significant additional work when self-hosting.
+
+**Time to market is critical**
+A commercial solution is production-ready in days. Self-hosted takes weeks to months.
+
+**You don't have infrastructure expertise**
+Learning on production observability systems is painful. If no one on the team knows Kafka, this is a hard path.
+
+### When Self-Hosted Is the Right Choice
+
+Conversely, self-hosted makes sense when:
+
+**Cost is a significant concern**
+The savings are real. $200K-400K/year can fund multiple engineering positions.
+
+**Data residency matters**
+Some industries and regions require data to stay on-premises or in specific geographic locations.
+
+**You need deep customization**
+Commercial tools are opinionated. If you need custom sampling logic, unusual retention policies, or specific processing rules, self-hosted gives you full control.
+
+**You have infrastructure expertise**
+If your team already runs Kubernetes, Kafka, and other complex systems, the marginal effort for observability is lower.
+
+**You're at massive scale**
+At very high volumes (millions of events/second), commercial pricing becomes astronomical. Self-hosted cost scales more linearly.
+
+**You're already committed to open source**
+If OpenTelemetry is your standard and you want to avoid any vendor lock-in, self-hosted is the pure path.
+
+---
+
+## The Trade-Offs We Accept
+
+Every architecture involves trade-offs. Here's what we're trading away in exchange for cost savings:
+
+### What We Give Up
+
+| Trade-off | Impact | Mitigation |
+|-----------|--------|------------|
+| **No vendor support** | You're on your own for troubleshooting | Active community, good documentation |
+| **Operational responsibility** | You manage upgrades, scaling | Automate with IaC, good runbooks |
+| **Feature development** | New features come from community | Most observability needs are stable |
+| **Learning curve** | Team needs to learn new tools | OTel is becoming industry standard |
+| **Initial setup time** | Weeks instead of hours | One-time investment |
+
+### What We Get
+
+| Benefit | Value |
+|---------|-------|
+| **97% cost savings** | $200K+/year for mid-size deployments |
+| **Full data ownership** | Telemetry never leaves your infrastructure |
+| **Unlimited customization** | Sampling, retention, processing rules |
+| **No vendor lock-in** | Switch backends without changing app code |
+| **Unlimited scale** | Object storage grows without limit |
+| **Learning investment** | Skills transfer to any OTel-compatible tool |
+
+### When This Architecture Is Wrong
+
+Be honest with yourself about whether this is right for your situation:
+
+**Don't use this if:**
+- Your team has no capacity for infrastructure work
+- You need enterprise support contracts for compliance
+- Observability isn't core to your business and you'd rather outsource it
+- Your scale is very small (<1K events/sec) and you just need something quick
+
+**Do use this if:**
+- Observability costs are a significant line item you want to control
+- Data residency or privacy requirements prevent using SaaS solutions
+- You want complete control over retention, sampling, and processing
+- Your team has infrastructure skills and capacity
+
+---
+
+## Evolution Path: Start Simple, Scale When Needed
+
+A common mistake is over-engineering from the start. Here's our recommended path:
+
+```
+Start Here                When You Need It              Eventually
+────────────              ──────────────────            ──────────
+Phase 1:                  Phase 2:                      Phase 3+:
+Single Node               Add Kafka & HA                Kubernetes
+                          
+┌─────────────┐           ┌─────────────┐              ┌─────────────┐
+│ All-in-one  │           │ Multi-node  │              │ K8s cluster │
+│ Docker      │    ──→    │ + Kafka     │      ──→     │ Operators   │
+│ Compose     │           │ + LB        │              │ Auto-scale  │
+└─────────────┘           └─────────────┘              └─────────────┘
+     
+Triggers:                 Triggers:                     Triggers:
+• >50K events/sec        • K8s standardization        • Multi-region
+• Need HA                 • >100K events/sec           • Enterprise scale
+                          • GitOps workflows
+```
+
+**Phase 1 is production-ready.** Don't let anyone tell you that you need Kafka and Kubernetes to run observability in production. Many teams successfully run Phase 1 for years.
+
+**Phase 2 is when you hit limits.** If you're consistently at capacity, experiencing issues during backend maintenance, or need formal HA SLAs, it's time.
+
+**Phase 3 is for K8s-native teams.** If your organization has standardized on Kubernetes and you want observability to follow the same deployment patterns, migrate then.
+
+### What Phase 3 (Kubernetes) Actually Looks Like
+
+Since we mention Kubernetes as Phase 3 but don't detail it, here's what changes:
+
+**Same architecture, different orchestration.** The five layers remain identical. What changes is how you deploy and manage the components.
+
+**Helm charts for everything.** Grafana Labs provides Helm charts for Tempo, Mimir, Loki, and Grafana. The OTel Collector has an official Helm chart. You describe your desired state, Helm deploys it.
+
+**Auto-scaling with HPA.** Instead of manually adding gateway instances, you define a HorizontalPodAutoscaler. Kubernetes automatically adds pods when CPU or custom metrics exceed thresholds.
+
+```yaml
+# Example: Scale gateways based on CPU
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: otel-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: otel-gateway
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+```
+
+**Operators for Kafka.** Running Kafka on Kubernetes is simplified with Strimzi (the Kafka operator). It handles broker deployment, configuration, rolling updates, and cluster scaling.
+
+**Pod Disruption Budgets for reliability.** PDBs ensure Kubernetes doesn't accidentally take down too many pods during maintenance.
+
+**GitOps workflows.** ArgoCD or Flux watches your Git repository and automatically applies changes to the cluster. Infrastructure changes go through pull requests just like code.
+
+**Service mesh integration (optional).** If you're running Istio or Linkerd, the OTel Collector can receive telemetry from the mesh, giving you detailed service-to-service visibility without application changes.
+
+The operational model shifts from "SSH to servers, run docker-compose" to "commit YAML, let GitOps deploy." This requires Kubernetes expertise but unlocks powerful automation.
+
+---
+
+## Final Thoughts
+
+Observability shouldn't be a luxury reserved for companies with large budgets. Every engineering team deserves the ability to understand what their software is doing.
+
+This architecture represents years of learning from running observability at scale. It's not perfect—no architecture is—but it's practical, proven, and dramatically more affordable than commercial alternatives.
+
+The key insights:
+
+1. **OpenTelemetry is the right foundation.** Instrument once, send anywhere.
+2. **Object storage changes the economics.** Cheap, durable, unlimited.
+3. **Sampling is essential at scale.** Keep what matters, sample the rest.
+4. **Start simple.** Single-node is production-ready for many teams.
+5. **Scale when you need to.** The architecture grows with your needs.
+
+When you're ready to build, the [Implementation Guide](./implementation-guide.md) walks you through every step.
+
+Good luck, and happy debugging.
+
+---
+
+## Quick Reference
+
+For those times when you just need to look something up quickly, here are the key facts from this document.
+
+### Architecture Summary (One Sentence Per Layer)
+
+| Layer | Components | Purpose |
+|-------|------------|---------|
+| **Ingestion** | Load Balancer + Gateway Collectors | Accept telemetry, handle scale |
+| **Buffering** | Kafka | Decouple ingestion from processing, durability |
+| **Processing** | Processor Collectors | Sample, filter, enrich, route |
+| **Storage** | Tempo, Mimir, Loki + Object Storage | Query-able, long-term retention |
+| **Visualization** | Grafana + PostgreSQL | Dashboards, exploration, alerting |
+
+### Capacity Guidelines
+
+| Scale | Events/sec | Setup | Cost/month |
+|-------|------------|-------|------------|
+| Small | <10K | Single node | $100-200 |
+| Medium | 10K-50K | Multi-node + Kafka | $500-2,000 |
+| Large | 50K-200K | Kubernetes | $2,000-8,000 |
+| Enterprise | >200K | Multi-cluster | $8,000+ |
 
 ### Port Reference
 
@@ -1534,43 +1780,16 @@ processors:
 | OTel Collector | 4317 | gRPC | OTLP ingestion |
 | OTel Collector | 4318 | HTTP | OTLP ingestion |
 | OTel Collector | 13133 | HTTP | Health check |
-| Prometheus | 9090 | HTTP | API and UI |
+| Prometheus/Mimir | 9090 | HTTP | API and UI |
 | Tempo | 3200 | HTTP | API |
-| Tempo | 4317 | gRPC | OTLP ingestion |
 | Loki | 3100 | HTTP | API |
 | Grafana | 3000 | HTTP | UI |
 | Kafka | 9092 | TCP | Client connections |
 
-### Component Selection Guide
+### Related Documents
 
-| Need | Simple | Scalable | Enterprise |
-|------|--------|----------|------------|
-| **Traces** | Jaeger (all-in-one) | Tempo | Tempo + S3 |
-| **Metrics** | Prometheus | Mimir | Mimir + S3 |
-| **Logs** | Loki (single) | Loki (simple scalable) | Loki (microservices) |
-| **Queue** | OTel persistent queue | Redis Streams | Kafka |
-| **Storage** | Local SSD | MinIO | S3/GCS/Azure Blob |
-
-### When NOT to Scale
-
-Stay on single-node if:
-
-- [ ] Throughput is consistently <50K events/sec
-- [ ] Uptime SLA is <99.9% (some downtime acceptable)
-- [ ] Team lacks Kubernetes expertise (and no plans to adopt)
-- [ ] Budget is highly constrained
-- [ ] Telemetry is non-critical (nice-to-have, not need-to-have)
-
-In these cases, optimize the single-node setup with persistent queues, resource limits, and backups.
-
----
-
-## Next Steps
-
-Ready to implement? See the [Implementation Guide](./implementation-guide.md) for step-by-step instructions.
-
-| Resource | Description |
+| Document | Description |
 |----------|-------------|
-| [Implementation Guide](./implementation-guide.md) | Step-by-step deployment |
+| [Implementation Guide](./implementation-guide.md) | Step-by-step deployment instructions |
 | [Config Files](./configs/) | All configuration files |
 | [Main README](../../README.md) | Project overview |
