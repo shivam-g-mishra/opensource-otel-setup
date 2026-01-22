@@ -1,0 +1,123 @@
+# OpenTelemetry Collector - Single Node Configuration
+# 
+# Features:
+# - Persistent queues (survives restarts)
+# - Memory limiter (prevents OOM)
+# - Retry policies (handles transient failures)
+# - Health check endpoint
+#
+# Usage: Mount this file to /etc/otelcol/config.yaml
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    timeout: 10s
+    compaction:
+      on_start: true
+      on_rebound: true
+      directory: /var/lib/otelcol/storage
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 4
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 10000
+    send_batch_max_size: 15000
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1600       # 80% of 2GB container limit
+    spike_limit_mib: 400
+
+  resource:
+    attributes:
+      - key: service.environment
+        value: production
+        action: upsert
+
+exporters:
+  # Traces to Jaeger
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  # Metrics to Prometheus (via remote write)
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+
+  # Logs to Loki
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+
+  # Debug exporter for troubleshooting
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  extensions: [health_check, file_storage]
+  
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/jaeger]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [loki]

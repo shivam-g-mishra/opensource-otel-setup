@@ -1,0 +1,284 @@
+# Docker Compose - Scalable Setup with Kafka
+#
+# A multi-node observability stack with:
+# - Load-balanced gateways
+# - Kafka message queue for durability
+# - Separate processor collectors
+# - Scalable storage backends
+#
+# Usage: docker compose -f docker-compose-scalable.yaml up -d --scale otel-gateway=3 --scale otel-processor=3
+
+services:
+  # =============================================================================
+  # Load Balancer
+  # =============================================================================
+  haproxy:
+    image: haproxy:2.9
+    container_name: haproxy
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8404:8404"   # HAProxy stats
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    depends_on:
+      - otel-gateway
+    networks:
+      - observability
+
+  # =============================================================================
+  # OTel Collector - Gateway (receives telemetry, forwards to Kafka)
+  # =============================================================================
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-gateway.yaml:/etc/otelcol/config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+      - "8888"
+      - "13133"
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - observability
+
+  # =============================================================================
+  # Kafka - Message Queue
+  # =============================================================================
+  kafka:
+    image: bitnami/kafka:3.6
+    container_name: kafka
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_NUM_PARTITIONS=6
+      - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=1
+      - KAFKA_CFG_LOG_RETENTION_HOURS=24
+    volumes:
+      - kafka-data:/bitnami/kafka
+    ports:
+      - "9092:9092"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # =============================================================================
+  # OTel Collector - Processor (consumes from Kafka, writes to backends)
+  # =============================================================================
+  otel-processor:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-processor.yaml:/etc/otelcol/config.yaml:ro
+      - otel-processor-storage:/var/lib/otelcol
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      mimir:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks:
+      - observability
+
+  # =============================================================================
+  # Tempo - Distributed Tracing
+  # =============================================================================
+  tempo:
+    image: grafana/tempo:2.3.0
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "14268:14268" # Jaeger HTTP
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # =============================================================================
+  # Mimir - Metrics Storage
+  # =============================================================================
+  mimir:
+    image: grafana/mimir:2.11.0
+    container_name: mimir
+    command: ["-config.file=/etc/mimir/mimir.yaml"]
+    volumes:
+      - ./mimir.yaml:/etc/mimir/mimir.yaml:ro
+      - mimir-data:/data
+    ports:
+      - "9009:9009"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9009/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # =============================================================================
+  # Loki - Log Aggregation
+  # =============================================================================
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: loki
+    command: -config.file=/etc/loki/loki.yaml
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - observability
+
+  # =============================================================================
+  # Grafana - Visualization (HA with shared database)
+  # =============================================================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - observability
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  observability:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  kafka-data:
+  otel-processor-storage:
+  tempo-data:
+  mimir-data:
+  loki-data:
+  grafana-data:

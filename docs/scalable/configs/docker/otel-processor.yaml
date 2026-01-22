@@ -1,0 +1,164 @@
+# OpenTelemetry Collector - Processor Configuration
+#
+# Role: Consume from Kafka, apply transformations, export to storage backends
+#
+# Features:
+# - Consumes from Kafka topics
+# - Tail-based sampling for traces
+# - Exports to Tempo, Mimir, Loki
+# - Stateless (can scale horizontally)
+#
+# Usage: Scale processors independently based on load
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    timeout: 10s
+
+receivers:
+  kafka/traces:
+    brokers:
+      - kafka:9092
+    topic: otlp-traces
+    protocol_version: "3.0.0"
+    encoding: otlp_proto
+    group_id: otel-trace-processors
+    initial_offset: latest
+    auto_commit:
+      enable: true
+      interval: 1s
+
+  kafka/metrics:
+    brokers:
+      - kafka:9092
+    topic: otlp-metrics
+    protocol_version: "3.0.0"
+    encoding: otlp_proto
+    group_id: otel-metric-processors
+    initial_offset: latest
+
+  kafka/logs:
+    brokers:
+      - kafka:9092
+    topic: otlp-logs
+    protocol_version: "3.0.0"
+    encoding: otlp_proto
+    group_id: otel-log-processors
+    initial_offset: latest
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 10000
+    send_batch_max_size: 15000
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 2048
+    spike_limit_mib: 512
+
+  # Tail-based sampling - keep errors, slow traces, and sample the rest
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 10000
+    policies:
+      # Keep all error traces
+      - name: errors-policy
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # Keep slow traces (>1s)
+      - name: latency-policy
+        type: latency
+        latency:
+          threshold_ms: 1000
+      # Sample 10% of remaining traces
+      - name: probabilistic-policy
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # Add Kubernetes metadata
+  k8sattributes:
+    extract:
+      metadata:
+        - k8s.namespace.name
+        - k8s.deployment.name
+        - k8s.pod.name
+        - k8s.node.name
+
+  resource:
+    attributes:
+      - key: collector.type
+        value: processor
+        action: upsert
+
+exporters:
+  # Traces to Tempo
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  # Metrics to Mimir
+  prometheusremotewrite/mimir:
+    endpoint: http://mimir:9009/api/v1/push
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+
+  # Logs to Loki
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+
+service:
+  extensions: [health_check, file_storage]
+  
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
+
+  pipelines:
+    traces:
+      receivers: [kafka/traces]
+      processors: [memory_limiter, tail_sampling, resource, batch]
+      exporters: [otlp/tempo]
+
+    metrics:
+      receivers: [kafka/metrics]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite/mimir]
+
+    logs:
+      receivers: [kafka/logs]
+      processors: [memory_limiter, resource, batch]
+      exporters: [loki]

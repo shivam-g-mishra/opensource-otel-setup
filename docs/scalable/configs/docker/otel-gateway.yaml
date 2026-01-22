@@ -1,0 +1,92 @@
+# OpenTelemetry Collector - Gateway Configuration
+#
+# Role: Receive telemetry from applications, forward to Kafka
+# 
+# Features:
+# - Lightweight processing (batch only)
+# - Publishes to Kafka topics
+# - Stateless (can scale horizontally)
+#
+# Usage: Deploy multiple instances behind a load balancer
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 4
+        max_concurrent_streams: 100
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 5000
+    send_batch_max_size: 10000
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1600
+    spike_limit_mib: 400
+
+exporters:
+  kafka/traces:
+    brokers:
+      - kafka:9092
+    topic: otlp-traces
+    protocol_version: "3.0.0"
+    encoding: otlp_proto
+    producer:
+      max_message_bytes: 10000000
+      compression: snappy
+      flush_max_messages: 500
+
+  kafka/metrics:
+    brokers:
+      - kafka:9092
+    topic: otlp-metrics
+    protocol_version: "3.0.0"
+    encoding: otlp_proto
+    producer:
+      max_message_bytes: 10000000
+      compression: snappy
+
+  kafka/logs:
+    brokers:
+      - kafka:9092
+    topic: otlp-logs
+    protocol_version: "3.0.0"
+    encoding: otlp_proto
+    producer:
+      max_message_bytes: 10000000
+      compression: snappy
+
+service:
+  extensions: [health_check]
+  
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [kafka/traces]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [kafka/metrics]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [kafka/logs]

@@ -1,0 +1,211 @@
+# Kubernetes - OTel Collector Gateway Deployment
+#
+# Receives telemetry from applications, forwards to Kafka
+# Stateless, horizontally scalable via HPA
+#
+# Apply: kubectl apply -f otel-gateway.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    name: observability
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-gateway-config
+  namespace: observability
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 5000
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 1600
+        spike_limit_mib: 400
+    
+    exporters:
+      kafka/traces:
+        brokers: [kafka-bootstrap.kafka.svc.cluster.local:9092]
+        topic: otlp-traces
+        encoding: otlp_proto
+      kafka/metrics:
+        brokers: [kafka-bootstrap.kafka.svc.cluster.local:9092]
+        topic: otlp-metrics
+        encoding: otlp_proto
+      kafka/logs:
+        brokers: [kafka-bootstrap.kafka.svc.cluster.local:9092]
+        topic: otlp-logs
+        encoding: otlp_proto
+    
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/traces]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/logs]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-gateway
+  namespace: observability
+  labels:
+    app: otel-gateway
+    component: gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: otel-gateway
+  template:
+    metadata:
+      labels:
+        app: otel-gateway
+        component: gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8888"
+    spec:
+      containers:
+      - name: collector
+        image: otel/opentelemetry-collector-contrib:0.91.0
+        args:
+          - "--config=/etc/otelcol/config.yaml"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+        ports:
+        - name: otlp-grpc
+          containerPort: 4317
+          protocol: TCP
+        - name: otlp-http
+          containerPort: 4318
+          protocol: TCP
+        - name: metrics
+          containerPort: 8888
+          protocol: TCP
+        - name: health
+          containerPort: 13133
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /etc/otelcol
+      volumes:
+      - name: config
+        configMap:
+          name: otel-gateway-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: otel-gateway
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-gateway
+  namespace: observability
+  labels:
+    app: otel-gateway
+spec:
+  type: LoadBalancer
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+    protocol: TCP
+  selector:
+    app: otel-gateway
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: otel-gateway-hpa
+  namespace: observability
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: otel-gateway
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: otel-gateway-pdb
+  namespace: observability
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: otel-gateway
