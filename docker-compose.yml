@@ -37,6 +37,14 @@ services:
     environment:
       - COLLECTOR_ZIPKIN_HOST_PORT=:9411
       - COLLECTOR_OTLP_ENABLED=true
+      # Use Badger for persistent storage with configurable retention
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+      - BADGER_SPAN_STORE_TTL=${TRACES_RETENTION:-720h}
+    volumes:
+      - jaeger-data:/badger
     networks:
       - observability
     restart: unless-stopped
@@ -58,7 +66,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}'
+      - '--storage.tsdb.retention.time=${METRICS_RETENTION:-30d}'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
@@ -134,10 +142,12 @@ services:
     container_name: otel-loki
     ports:
       - "${LOKI_PORT:-3100}:3100"
+    environment:
+      - LOGS_RETENTION=${LOGS_RETENTION:-720h}
     volumes:
       - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - loki-data:/loki
-    command: -config.file=/etc/loki/loki-config.yaml
+    command: -config.file=/etc/loki/loki-config.yaml -config.expand-env=true
     networks:
       - observability
     restart: unless-stopped
@@ -189,4 +199,6 @@ volumes:
   seq-data:
     driver: local
   loki-data:
+    driver: local
+  jaeger-data:
     driver: local

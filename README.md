@@ -115,6 +115,8 @@ opensource-otel-setup/
 ├── otel-collector-config.yaml  # OTel Collector configuration
 ├── prometheus/
 │   └── prometheus.yml          # Prometheus scrape configs
+├── loki/
+│   └── loki-config.yaml        # Loki log aggregation config
 ├── grafana/
 │   └── provisioning/
 │       ├── datasources/        # Auto-configured datasources
@@ -123,7 +125,7 @@ opensource-otel-setup/
 │   ├── start.sh               # Start the stack
 │   ├── stop.sh                # Stop the stack
 │   └── status.sh              # Check health status
-└── docs/                      # Additional documentation
+└── docs/                      # Integration guides
 ```
 
 ## ⚙️ Configuration
@@ -144,13 +146,30 @@ OTEL_HTTP_PORT=4318
 GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=admin
 
-# Prometheus
-PROMETHEUS_RETENTION=15d
+# Data Retention (default: 30 days for all)
+TRACES_RETENTION=720h    # Jaeger traces (Go duration: 720h = 30 days)
+METRICS_RETENTION=30d    # Prometheus metrics
+LOGS_RETENTION=720h      # Loki logs (Go duration: 720h = 30 days)
 
 # Service metadata (added to all telemetry)
 SERVICE_NAMESPACE=my-company
 DEPLOYMENT_ENV=production
 ```
+
+### Data Retention
+
+All telemetry data has configurable retention with a **default of 30 days**:
+
+| Data Type | Variable | Default | Format | Example Values |
+|-----------|----------|---------|--------|----------------|
+| **Traces** | `TRACES_RETENTION` | 720h | Go duration | `168h` (7d), `720h` (30d), `2160h` (90d) |
+| **Metrics** | `METRICS_RETENTION` | 30d | Prometheus duration | `7d`, `30d`, `90d` |
+| **Logs** | `LOGS_RETENTION` | 720h | Go duration | `168h` (7d), `720h` (30d), `2160h` (90d) |
+
+**Storage Notes:**
+- Traces are stored in Jaeger's Badger database (persistent)
+- Metrics are stored in Prometheus TSDB
+- Logs are stored in Loki's filesystem storage
 
 ### Include Seq (for .NET apps)
 
@@ -197,9 +216,9 @@ docker compose --profile seq up -d
                                └─────────────────────┘
 ```
 
-## 🛡️ Fault Tolerance
+## 🛡️ Fault Tolerance & Persistence
 
-The OTel Collector includes:
+The stack includes fault tolerance and persistent storage:
 
 | Feature | Description |
 |---------|-------------|
@@ -207,6 +226,8 @@ The OTel Collector includes:
 | **Retry on Failure** | Auto-retries failed exports (5s → 30s backoff) |
 | **Sending Queue** | Buffers 5000 items during outages |
 | **Health Checks** | All services have health endpoints |
+| **Persistent Storage** | All data survives container restarts |
+| **Configurable Retention** | Default 30 days for traces, metrics, and logs |
 
 ## 🔍 Debug Endpoints
 

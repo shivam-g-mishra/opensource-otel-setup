@@ -4,6 +4,10 @@
 # Loki is a log aggregation system designed to store and query logs.
 # This is a minimal single-instance configuration suitable for development.
 #
+# Environment Variables:
+#   LOGS_RETENTION - Log retention period (default: 720h = 30 days)
+#                    Examples: 168h (7 days), 720h (30 days), 2160h (90 days)
+#
 # For production, consider:
 #   - Using object storage (S3, GCS, Azure Blob)
 #   - Running multiple instances with a shared store
@@ -53,7 +57,7 @@ ruler:
 # Limits configuration
 limits_config:
   reject_old_samples: true
-  reject_old_samples_max_age: 168h  # 7 days
+  reject_old_samples_max_age: ${LOGS_RETENTION:-720h}  # Default: 30 days
   ingestion_rate_mb: 16
   ingestion_burst_size_mb: 32
   max_streams_per_user: 10000
@@ -69,6 +73,7 @@ compactor:
   delete_request_store: filesystem
 
 # Table manager for retention
+# Note: LOGS_RETENTION is set via environment variable (default: 720h = 30 days)
 table_manager:
   retention_deletes_enabled: true
-  retention_period: 168h  # 7 days - adjust as needed
+  retention_period: ${LOGS_RETENTION:-720h}
