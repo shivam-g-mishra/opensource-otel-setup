@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-**Version:** 1.0  
+**Version:** 2.0  
 **Date:** January 2026  
 **Status:** Approved
 
@@ -12,7 +12,7 @@
 
 | Document | Description |
 |----------|-------------|
-| **This Document** | Architecture concepts, design decisions, requirements |
+| **This Document** | Architecture concepts, design decisions, technology deep-dives |
 | [Implementation Guide](./implementation-guide.md) | Step-by-step deployment instructions |
 | [Config Files](./configs/) | All configuration files referenced in the guide |
 
@@ -21,197 +21,671 @@
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
-2. [Current State](#current-state)
-3. [Why Scale?](#why-scale)
-4. [Target Architecture](#target-architecture)
-5. [Component Overview](#component-overview)
-6. [Infrastructure Requirements](#infrastructure-requirements)
-7. [Security Considerations](#security-considerations)
-8. [Cost Analysis](#cost-analysis)
-9. [Decision Summary](#decision-summary)
+2. [Understanding Observability](#understanding-observability)
+3. [Why OpenTelemetry?](#why-opentelemetry)
+4. [Current State Analysis](#current-state-analysis)
+5. [When and Why to Scale](#when-and-why-to-scale)
+6. [Target Architecture](#target-architecture)
+7. [Technology Deep Dive](#technology-deep-dive)
+8. [Data Flow & Processing](#data-flow--processing)
+9. [Infrastructure Requirements](#infrastructure-requirements)
+10. [Security Architecture](#security-architecture)
+11. [Cost Analysis](#cost-analysis)
+12. [Technology Decisions](#technology-decisions)
+13. [Appendix](#appendix-quick-reference)
 
 ---
+
+# Part I: Foundation
 
 ## Executive Summary
 
-### The Problem
+### The Business Problem
 
-Modern distributed systems generate massive telemetry data—traces, metrics, and logs—essential for reliability and debugging. Commercial solutions (Datadog, New Relic, Splunk) cost **$2,000-$200,000+/month** depending on scale.
+Modern software systems are distributed, complex, and generate enormous amounts of operational data. When something goes wrong—a slow API, a failed transaction, a service outage—engineers need to quickly answer:
 
-### The Solution
+- **What happened?** (the symptom)
+- **Where did it happen?** (which service, which instance)
+- **Why did it happen?** (root cause)
+- **How do we prevent it?** (patterns and trends)
 
-A **self-hosted observability platform** built on open-source components:
+This requires comprehensive **observability**: the ability to understand a system's internal state by examining its outputs (logs, metrics, traces).
 
-| Component | Purpose | Technology |
-|-----------|---------|------------|
-| **Collection** | Unified telemetry ingestion | OpenTelemetry Collector |
-| **Tracing** | Distributed trace storage | Jaeger → Tempo |
-| **Metrics** | Time-series storage | Prometheus → Mimir |
-| **Logs** | Log aggregation | Loki |
-| **Visualization** | Dashboards & alerting | Grafana |
+### The Cost Problem
 
-### Key Benefits
+Commercial observability platforms provide excellent capabilities but at significant cost:
 
-| Benefit | Impact |
-|---------|--------|
-| **Cost Savings** | 60-90% reduction vs. commercial solutions |
-| **Data Ownership** | Full control over sensitive telemetry |
-| **Flexibility** | Customize retention, sampling, processing |
-| **No Vendor Lock-in** | OpenTelemetry is vendor-neutral |
-| **Scalability** | Single-node to enterprise scale |
+| Vendor | Pricing Model | Typical Cost (50K events/sec) |
+|--------|---------------|-------------------------------|
+| **Datadog** | Per host + per GB ingested | $20,000-40,000/month |
+| **New Relic** | Per GB ingested | $15,000-30,000/month |
+| **Splunk** | Per GB indexed | $25,000-50,000/month |
+| **Dynatrace** | Per host | $15,000-25,000/month |
 
----
+For a mid-size company with 100+ services, costs can reach **$200,000-500,000/year**.
 
-## Current State
+### Our Solution
 
-### Single-Node Architecture
+A **self-hosted observability platform** built entirely on open-source software, providing:
 
-The current implementation runs all components on a single server:
+- **97% cost reduction** compared to commercial solutions
+- **Full data ownership** (telemetry never leaves your infrastructure)
+- **No vendor lock-in** (OpenTelemetry is an open standard)
+- **Unlimited scalability** (from single-node to enterprise)
+- **Complete customization** (retention, sampling, processing rules)
 
-```mermaid
-flowchart TB
-    subgraph Apps["Applications"]
-        A1[Service 1] & A2[Service 2] & A3[Service N]
-    end
-    
-    subgraph Stack["Single Node"]
-        OC[OTel Collector]
-        J[("Jaeger")] & P[("Prometheus")] & L[("Loki")]
-        G[Grafana]
-    end
-    
-    Apps -->|OTLP| OC
-    OC --> J & P & L
-    J & P & L --> G
-    
-    style Stack fill:#e3f2fd,stroke:#1976d2
+### Technology Stack Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              APPLICATIONS                                │
+│         (Your services instrumented with OpenTelemetry SDKs)            │
+└─────────────────────────────────┬───────────────────────────────────────┘
+                                  │ OTLP Protocol
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         OPENTELEMETRY COLLECTOR                          │
+│              (Receives, processes, and routes all telemetry)            │
+└───────────┬─────────────────────┬─────────────────────┬─────────────────┘
+            │                     │                     │
+            ▼                     ▼                     ▼
+┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
+│      TEMPO        │ │  PROMETHEUS/MIMIR │ │       LOKI        │
+│    (Traces)       │ │    (Metrics)      │ │      (Logs)       │
+└─────────┬─────────┘ └─────────┬─────────┘ └─────────┬─────────┘
+          │                     │                     │
+          └─────────────────────┼─────────────────────┘
+                                │
+                                ▼
+                    ┌───────────────────┐
+                    │      GRAFANA      │
+                    │  (Visualization)  │
+                    └───────────────────┘
 ```
 
-### Current Capabilities
-
-| Capability | Capacity | Status |
-|------------|----------|--------|
-| Traces | ~50K spans/sec | Operational |
-| Metrics | ~1M active series | Operational |
-| Logs | ~50K lines/sec | Operational |
-| Retention | 30 days | Configurable |
-| Recovery | Persistent queues | Implemented |
-
-### Strengths
-
-- **Simple**: Single `docker compose up` deploys everything
-- **Low Cost**: Runs on $50-150/month VPS
-- **Easy Maintenance**: One node to manage
-- **Production Ready**: Health checks, auto-restart, backups
-
-### Limitations
-
-| Limitation | Risk | Impact |
-|------------|------|--------|
-| Single point of failure | High | Complete outage if node fails |
-| Vertical scaling only | Medium | Limited by single-node resources |
-| No geographic redundancy | Medium | Cannot survive datacenter failure |
-| Shared resources | Medium | Components compete for CPU/memory |
-| Maintenance downtime | Low | Upgrades require brief interruption |
-
 ---
 
-## Why Scale?
+## Understanding Observability
 
-### When to Scale
+### The Three Pillars of Observability
 
-You should consider scaling when ANY of these apply:
+Observability is built on three complementary data types, each providing different insights:
+
+```mermaid
+flowchart LR
+    subgraph Pillars["Three Pillars of Observability"]
+        direction TB
+        
+        subgraph Traces["🔍 TRACES"]
+            T1["What: Request journey across services"]
+            T2["When: Single request debugging"]
+            T3["Example: Why did this API call take 5 seconds?"]
+        end
+        
+        subgraph Metrics["📊 METRICS"]
+            M1["What: Numerical measurements over time"]
+            M2["When: Trends, alerting, capacity planning"]
+            M3["Example: What's our p99 latency trend?"]
+        end
+        
+        subgraph Logs["📝 LOGS"]
+            L1["What: Discrete events with context"]
+            L2["When: Debugging, audit trails"]
+            L3["Example: What errors occurred at 3am?"]
+        end
+    end
+    
+    style Traces fill:#e3f2fd,stroke:#1976d2
+    style Metrics fill:#fff3e0,stroke:#ff9800
+    style Logs fill:#e8f5e9,stroke:#4caf50
+```
+
+### Traces: Understanding Request Flow
+
+**What are traces?**
+
+A trace represents a single request's journey through your distributed system. It consists of **spans**—individual units of work with timing information.
+
+```
+Trace: User Login Request (trace_id: abc123)
+│
+├── Span: API Gateway (50ms)
+│   └── Span: Auth Service (30ms)
+│       ├── Span: Database Query (15ms)
+│       └── Span: Cache Lookup (2ms)
+│
+└── Span: Session Service (10ms)
+    └── Span: Redis Write (5ms)
+
+Total Duration: 60ms
+```
+
+**When to use traces:**
+- Debugging slow requests ("Why did this take 5 seconds?")
+- Understanding service dependencies
+- Finding bottlenecks in request flow
+- Root cause analysis for errors
+
+**Key trace concepts:**
+| Concept | Description |
+|---------|-------------|
+| **Trace** | Complete journey of a request (collection of spans) |
+| **Span** | Single unit of work (has start time, duration, attributes) |
+| **Trace ID** | Unique identifier linking all spans in a trace |
+| **Span ID** | Unique identifier for each span |
+| **Parent Span** | The span that initiated this span |
+| **Attributes** | Key-value metadata (user_id, http.status_code, etc.) |
+
+### Metrics: Understanding System Behavior
+
+**What are metrics?**
+
+Metrics are numerical measurements collected over time. They're highly efficient for storage and querying, making them ideal for dashboards and alerts.
+
+**Types of metrics:**
+
+| Type | Description | Example |
+|------|-------------|---------|
+| **Counter** | Cumulative value that only increases | Total HTTP requests: 1,234,567 |
+| **Gauge** | Value that can go up or down | Current memory usage: 2.5 GB |
+| **Histogram** | Distribution of values | Request latency buckets (p50, p90, p99) |
+| **Summary** | Pre-calculated percentiles | Request duration: p99 = 250ms |
+
+**When to use metrics:**
+- Real-time dashboards
+- Alerting on thresholds
+- Capacity planning
+- SLO/SLA monitoring
+- Trend analysis
+
+**Example metrics:**
+```
+# Counter - total requests
+http_requests_total{method="GET", status="200", service="api"} 12345
+
+# Gauge - current connections
+db_connections_active{pool="primary"} 45
+
+# Histogram - latency distribution
+http_request_duration_seconds_bucket{le="0.1"} 8000
+http_request_duration_seconds_bucket{le="0.5"} 9500
+http_request_duration_seconds_bucket{le="1.0"} 9900
+```
+
+### Logs: Understanding Events
+
+**What are logs?**
+
+Logs are discrete events that occurred at a specific time. They contain structured or unstructured text describing what happened.
+
+**Log levels:**
+| Level | When to Use |
+|-------|-------------|
+| **ERROR** | Something failed, requires attention |
+| **WARN** | Potential issue, degraded but functioning |
+| **INFO** | Normal operations, significant events |
+| **DEBUG** | Detailed diagnostic information |
+| **TRACE** | Very detailed, usually disabled in production |
+
+**Structured vs. Unstructured logs:**
+
+```
+# Unstructured (hard to query)
+2024-01-15 10:23:45 ERROR Failed to process payment for user 12345
+
+# Structured (easy to query and correlate)
+{
+  "timestamp": "2024-01-15T10:23:45Z",
+  "level": "ERROR",
+  "message": "Failed to process payment",
+  "user_id": "12345",
+  "payment_id": "pay_abc123",
+  "error": "insufficient_funds",
+  "trace_id": "abc123def456"  // Links to trace!
+}
+```
+
+### Correlation: The Power of Connected Data
+
+The real power of observability comes from **correlating** all three signals:
 
 ```mermaid
 flowchart TD
-    Start[Evaluate Need] --> Q1{"> 50K events/sec<br/>sustained?"}
-    Q1 -->|Yes| Scale["Scale to Multi-Node"]
-    Q1 -->|No| Q2{"99.9%+ uptime<br/>required?"}
+    Alert["🚨 Alert: High Error Rate"] --> Metrics
+    
+    subgraph Investigation["Investigation Flow"]
+        Metrics["📊 Metrics<br/>Error rate spike at 3:00 PM"] --> Logs
+        Logs["📝 Logs<br/>Filter by time + error level<br/>Found: 'Connection refused'"] --> Traces
+        Traces["🔍 Traces<br/>Trace ID from log<br/>Shows: DB timeout at 2.5s"]
+    end
+    
+    Traces --> RootCause["✅ Root Cause<br/>Database connection pool exhausted"]
+    
+    style Alert fill:#ffcdd2,stroke:#c62828
+    style RootCause fill:#c8e6c9,stroke:#2e7d32
+```
+
+---
+
+## Why OpenTelemetry?
+
+### What is OpenTelemetry?
+
+**OpenTelemetry (OTel)** is an open-source observability framework that provides:
+
+1. **APIs and SDKs** for instrumenting applications (available for all major languages)
+2. **A standard protocol (OTLP)** for transmitting telemetry data
+3. **The OpenTelemetry Collector** for receiving, processing, and exporting telemetry
+
+```mermaid
+flowchart LR
+    subgraph Apps["Your Applications"]
+        SDK1["Go SDK"] & SDK2["Java SDK"] & SDK3["Python SDK"] & SDK4[".NET SDK"]
+    end
+    
+    subgraph OTel["OpenTelemetry"]
+        OTLP["OTLP Protocol"]
+        Collector["OTel Collector"]
+    end
+    
+    subgraph Backends["Any Backend"]
+        B1["Jaeger/Tempo"]
+        B2["Prometheus/Mimir"]
+        B3["Loki/Elasticsearch"]
+        B4["Datadog/New Relic"]
+    end
+    
+    Apps -->|OTLP| Collector
+    Collector --> Backends
+    
+    style OTel fill:#e8f5e9,stroke:#4caf50
+```
+
+### Why Choose OpenTelemetry?
+
+| Benefit | Explanation |
+|---------|-------------|
+| **Vendor Neutral** | Switch backends without changing application code |
+| **Industry Standard** | Backed by CNCF, adopted by all major vendors |
+| **Single Instrumentation** | One SDK for traces, metrics, and logs |
+| **Rich Ecosystem** | SDKs for 11+ languages, 100+ integrations |
+| **Future Proof** | Rapidly becoming the industry standard |
+| **Community Support** | Large, active open-source community |
+
+### OpenTelemetry vs. Alternatives
+
+| Feature | OpenTelemetry | Jaeger SDK | Prometheus Client | Vendor SDKs |
+|---------|---------------|------------|-------------------|-------------|
+| **Traces** | ✅ | ✅ | ❌ | ✅ |
+| **Metrics** | ✅ | ❌ | ✅ | ✅ |
+| **Logs** | ✅ | ❌ | ❌ | ✅ |
+| **Vendor Neutral** | ✅ | ✅ | ✅ | ❌ |
+| **Single SDK** | ✅ | ❌ | ❌ | ✅ |
+| **Industry Standard** | ✅ | Partial | Partial | ❌ |
+
+### The OpenTelemetry Collector
+
+The **OTel Collector** is the heart of our architecture. It's a vendor-agnostic proxy that can:
+
+```mermaid
+flowchart LR
+    subgraph Receive["📥 RECEIVE"]
+        R1["OTLP"]
+        R2["Jaeger"]
+        R3["Prometheus"]
+        R4["Zipkin"]
+        R5["FluentBit"]
+    end
+    
+    subgraph Process["⚙️ PROCESS"]
+        P1["Batch"]
+        P2["Filter"]
+        P3["Transform"]
+        P4["Sample"]
+        P5["Enrich"]
+    end
+    
+    subgraph Export["📤 EXPORT"]
+        E1["Tempo"]
+        E2["Mimir"]
+        E3["Loki"]
+        E4["Kafka"]
+        E5["Any Vendor"]
+    end
+    
+    Receive --> Process --> Export
+```
+
+**Key Collector capabilities:**
+
+| Capability | What It Does | Why It Matters |
+|------------|--------------|----------------|
+| **Protocol Translation** | Convert between formats (Jaeger ↔ OTLP) | Accept data from any source |
+| **Batching** | Group telemetry into efficient batches | Reduce network overhead |
+| **Sampling** | Keep subset of traces intelligently | Control costs and volume |
+| **Filtering** | Drop unwanted telemetry | Reduce noise and costs |
+| **Enrichment** | Add metadata (K8s labels, etc.) | Better context for debugging |
+| **Routing** | Send different data to different backends | Flexibility in storage |
+| **Queuing** | Buffer data during backend outages | Prevent data loss |
+| **Retry** | Retry failed exports | Reliability |
+
+---
+
+# Part II: Current State & Scaling
+
+## Current State Analysis
+
+### Single-Node Architecture
+
+The current implementation runs all observability components on a single server:
+
+```mermaid
+flowchart TB
+    subgraph Apps["📱 Applications"]
+        A1["Service A"]
+        A2["Service B"]
+        A3["Service C"]
+    end
+    
+    subgraph SingleNode["🖥️ Single Node (Docker Compose)"]
+        OC["OpenTelemetry Collector<br/>━━━━━━━━━━━━━━━━━━━<br/>• Receives OTLP<br/>• Batches data<br/>• Persistent queue"]
+        
+        subgraph Storage["Storage Layer"]
+            J[("Jaeger<br/>━━━━━━━━<br/>Badger DB<br/>~50K spans/s")]
+            P[("Prometheus<br/>━━━━━━━━━<br/>TSDB<br/>~1M series")]
+            L[("Loki<br/>━━━━━━<br/>BoltDB<br/>~50K lines/s")]
+        end
+        
+        G["Grafana<br/>━━━━━━━━<br/>Dashboards<br/>Alerting"]
+    end
+    
+    Apps -->|"OTLP (gRPC/HTTP)"| OC
+    OC -->|Traces| J
+    OC -->|Metrics| P
+    OC -->|Logs| L
+    J & P & L --> G
+    
+    style SingleNode fill:#e3f2fd,stroke:#1976d2
+    style OC fill:#ff9800,stroke:#e65100
+```
+
+### What Each Component Does
+
+| Component | Role | Technology | Storage |
+|-----------|------|------------|---------|
+| **OTel Collector** | Receives, processes, routes telemetry | OTel Collector Contrib | Persistent queue (disk) |
+| **Jaeger** | Stores and queries distributed traces | Jaeger All-in-One | Badger (embedded KV store) |
+| **Prometheus** | Stores and queries metrics | Prometheus | TSDB (time-series DB) |
+| **Loki** | Stores and queries logs | Grafana Loki | BoltDB + chunks on disk |
+| **Grafana** | Visualizes all data, alerting | Grafana OSS | SQLite (dashboards) |
+
+### Current Capabilities & Limits
+
+| Metric | Current Capacity | How We Measured |
+|--------|------------------|-----------------|
+| **Traces** | ~50,000 spans/second | OTel Collector benchmark |
+| **Metrics** | ~1,000,000 active series | Prometheus stress test |
+| **Logs** | ~50,000 lines/second | Loki ingestion test |
+| **Query Latency** | <1s for 1h window | Grafana dashboard load |
+| **Data Retention** | 30 days | Configurable per backend |
+| **Storage Growth** | ~50 GB/day at moderate load | Actual measurement |
+
+### Reliability Features (Already Implemented)
+
+| Feature | How It Works | Benefit |
+|---------|--------------|---------|
+| **Persistent Queues** | OTel Collector writes to disk before export | Data survives restarts |
+| **Resource Limits** | Docker memory/CPU limits per container | Prevents OOM crashes |
+| **Health Checks** | Each container exposes health endpoint | Auto-restart on failure |
+| **Auto-Restart** | Docker `restart: unless-stopped` | Self-healing |
+| **Graceful Shutdown** | 30s drain period before stop | Zero data loss on deploy |
+| **Automated Backups** | Daily cron job backs up volumes | Disaster recovery |
+
+### Strengths of Current Setup
+
+| Strength | Details |
+|----------|---------|
+| **Simplicity** | One command (`docker compose up`) deploys everything |
+| **Low Cost** | Runs on a single $50-150/month VPS or on-prem server |
+| **Easy Operations** | One node to monitor, update, backup |
+| **Full Featured** | Complete observability for traces, metrics, logs |
+| **Production Ready** | Health checks, persistence, alerting included |
+| **Quick Recovery** | Simple backup/restore process |
+
+### Limitations (Why You Might Need to Scale)
+
+| Limitation | Impact | Risk Level |
+|------------|--------|------------|
+| **Single Point of Failure** | Node failure = complete observability blackout | 🔴 High |
+| **Vertical Scaling Only** | Can only add resources to one machine | 🟡 Medium |
+| **No Geographic Redundancy** | Cannot survive datacenter/region failure | 🟡 Medium |
+| **Shared Resources** | Heavy Prometheus query affects Jaeger writes | 🟡 Medium |
+| **Maintenance Downtime** | Upgrades require brief interruption | 🟢 Low |
+| **Limited Throughput** | Hard ceiling at ~50K events/sec | 🟢 Low* |
+
+*Low risk unless you're approaching this limit
+
+---
+
+## When and Why to Scale
+
+### Decision Framework
+
+Use this flowchart to determine if you need to scale:
+
+```mermaid
+flowchart TD
+    Start["🤔 Should I Scale?"] --> Q1
+    
+    Q1{"Is sustained throughput<br/>> 50K events/sec?"}
+    Q1 -->|Yes| Scale["✅ Scale to Multi-Node"]
+    Q1 -->|No| Q2
+    
+    Q2{"Do you need<br/>99.9%+ uptime SLA?"}
     Q2 -->|Yes| Scale
-    Q2 -->|No| Q3{"Multi-region<br/>deployment?"}
+    Q2 -->|No| Q3
+    
+    Q3{"Do you have<br/>multi-region apps?"}
     Q3 -->|Yes| Scale
-    Q3 -->|No| Q4{"Data residency<br/>compliance?"}
+    Q3 -->|No| Q4
+    
+    Q4{"Data residency<br/>compliance required?"}
     Q4 -->|Yes| Scale
-    Q4 -->|No| Stay["Stay Single-Node"]
+    Q4 -->|No| Q5
+    
+    Q5{"Frequent performance<br/>issues?"}
+    Q5 -->|Yes| Optimize["⚡ First: Optimize Single-Node"]
+    Q5 -->|No| Stay["✅ Stay Single-Node"]
+    
+    Optimize --> Q6{"Still having<br/>issues?"}
+    Q6 -->|Yes| Scale
+    Q6 -->|No| Stay
     
     style Scale fill:#c8e6c9,stroke:#4caf50
     style Stay fill:#e3f2fd,stroke:#2196f3
+    style Optimize fill:#fff3e0,stroke:#ff9800
 ```
 
-### Problems Solved by Scaling
+### Problems That Scaling Solves
 
-#### 1. Availability
+#### Problem 1: Single Point of Failure
 
-| Single-Node | Scaled |
-|-------------|--------|
-| Node failure = total outage | Redundant nodes, no single point of failure |
-| ~99% uptime realistic | 99.9%+ uptime achievable |
+**The Issue:**
+```
+Single Node Architecture:
+                    
+   [Node] ──── If this fails, everything fails
+      │
+      └── Jaeger, Prometheus, Loki, Grafana
+          ALL unavailable during failure
+```
 
-#### 2. Throughput
+**The Solution:**
+```
+Multi-Node Architecture:
 
-| Single-Node | Scaled |
-|-------------|--------|
-| ~50K events/sec max | 500K+ events/sec |
-| Aggressive sampling needed | Minimal sampling required |
+   [Node 1] ──┐
+   [Node 2] ──┼── If any node fails, others continue
+   [Node 3] ──┘
+```
 
-#### 3. Resource Isolation
+| Scenario | Single-Node | Multi-Node |
+|----------|-------------|------------|
+| Node crash | 100% outage until restart | 0% outage (others take over) |
+| Disk failure | Data loss possible | No data loss (replicated) |
+| Network issue | Complete blackout | Partial, graceful degradation |
+| Realistic SLA | ~99% (8.7 hours downtime/year) | ~99.9% (8.7 minutes downtime/year) |
 
-| Single-Node | Scaled |
-|-------------|--------|
-| Components compete for resources | Dedicated resources per component |
-| Unpredictable performance | Guaranteed SLAs |
+#### Problem 2: Throughput Ceiling
 
-#### 4. Operations
+**The Issue:**
 
-| Single-Node | Scaled |
-|-------------|--------|
-| Maintenance requires downtime | Rolling updates, zero downtime |
-| Single backup strategy | Distributed, redundant storage |
+A single OTel Collector can process ~50K events/second. Beyond that:
+- Events queue up
+- Memory pressure increases  
+- Data gets dropped
+
+**The Solution:**
+
+Multiple collectors behind a load balancer:
+
+```
+Single Collector: 50K events/sec max
+
+┌──────────────┐
+│  Collector   │ ← Bottleneck
+└──────────────┘
+
+Multiple Collectors: 50K × N events/sec
+
+        ┌───────────────┐
+        │ Load Balancer │
+        └───────┬───────┘
+    ┌───────────┼───────────┐
+    ▼           ▼           ▼
+┌────────┐ ┌────────┐ ┌────────┐
+│Coll. 1 │ │Coll. 2 │ │Coll. 3 │  = 150K events/sec
+└────────┘ └────────┘ └────────┘
+```
+
+#### Problem 3: Resource Contention
+
+**The Issue:**
+
+On a single node, components compete for resources:
+
+```
+Limited Resources (16 GB RAM, 8 CPU):
+
+┌─────────────────────────────────────────┐
+│ Prometheus │ Jaeger │ Loki │ Collector  │
+│   6 GB     │  4 GB  │ 3 GB │    2 GB    │
+└─────────────────────────────────────────┘
+         ↑
+         └── Heavy query starves other components
+```
+
+**The Solution:**
+
+Dedicated resources per component:
+
+```
+Dedicated Nodes:
+
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│Prometheus│  │  Jaeger  │  │   Loki   │
+│  16 GB   │  │  16 GB   │  │  16 GB   │
+└──────────┘  └──────────┘  └──────────┘
+      ↑
+      └── Heavy query doesn't affect others
+```
+
+#### Problem 4: Maintenance Downtime
+
+**The Issue:**
+
+Upgrading a single-node setup requires downtime:
+
+```
+1. Stop services (data collection stops)
+2. Pull new images
+3. Start services
+4. Wait for health checks
+
+Downtime: 1-5 minutes
+```
+
+**The Solution:**
+
+Rolling updates with zero downtime:
+
+```
+1. Add new node with updated version
+2. Drain traffic from old node
+3. Remove old node
+4. Repeat for each node
+
+Downtime: 0 minutes
+```
 
 ---
+
+# Part III: Target Architecture
 
 ## Target Architecture
 
 ### Design Principles
 
-| Principle | Description |
-|-----------|-------------|
-| **Loose Coupling** | Components can be upgraded/scaled independently |
-| **Horizontal Scaling** | Add nodes to increase capacity |
-| **Graceful Degradation** | Partial failures don't cause complete outages |
-| **Data Durability** | No data loss during failures or upgrades |
+Before diving into components, understand the principles guiding our architecture:
 
-### Five-Layer Architecture
+| Principle | What It Means | How We Achieve It |
+|-----------|---------------|-------------------|
+| **Loose Coupling** | Components don't directly depend on each other | Message queue between ingestion and processing |
+| **Horizontal Scaling** | Add more instances to handle more load | Stateless collectors, partitioned queues |
+| **Graceful Degradation** | Partial failure doesn't mean total failure | Health checks, circuit breakers, fallbacks |
+| **Data Durability** | No data loss during failures or upgrades | Persistent queues, replication, object storage |
+| **Operational Simplicity** | Easy to understand, deploy, troubleshoot | Clear separation of concerns, standard tooling |
+
+### The Five-Layer Architecture
 
 ```mermaid
 flowchart TB
-    subgraph L1["Layer 1: Ingestion"]
-        LB["Load Balancer"]
+    subgraph L1["LAYER 1: INGESTION"]
+        direction LR
+        LB["🔄 Load Balancer<br/>━━━━━━━━━━━━━━━━<br/>HAProxy / NGINX<br/>AWS ALB / GCP LB"]
         G1["Gateway 1"] & G2["Gateway 2"] & G3["Gateway N"]
         LB --> G1 & G2 & G3
     end
     
-    subgraph L2["Layer 2: Buffering"]
-        MQ[("Message Queue<br/>Kafka / Redis")]
+    subgraph L2["LAYER 2: BUFFERING"]
+        MQ[("📨 Message Queue<br/>━━━━━━━━━━━━━━━━━━━<br/>Kafka (high volume)<br/>Redis Streams (simple)")]
     end
     
-    subgraph L3["Layer 3: Processing"]
-        P1["Processor Pool"]
+    subgraph L3["LAYER 3: PROCESSING"]
+        direction LR
+        TP["Trace<br/>Processors"] 
+        MP["Metric<br/>Processors"]
+        LP["Log<br/>Processors"]
     end
     
-    subgraph L4["Layer 4: Storage"]
-        T[("Tempo")] & M[("Mimir")] & L[("Loki")]
-        S3[("Object Storage")]
+    subgraph L4["LAYER 4: STORAGE"]
+        direction LR
+        T[("🔍 Tempo<br/>Traces")]
+        M[("📊 Mimir<br/>Metrics")]
+        L[("📝 Loki<br/>Logs")]
+        S3[("☁️ Object Storage<br/>S3 / MinIO / GCS")]
     end
     
-    subgraph L5["Layer 5: Visualization"]
-        Graf["Grafana HA"]
+    subgraph L5["LAYER 5: VISUALIZATION"]
+        Graf["📈 Grafana HA<br/>━━━━━━━━━━━━━━<br/>PostgreSQL backend<br/>for shared state"]
     end
     
-    Apps["Applications"] --> LB
+    Apps["📱 Applications"] --> LB
     G1 & G2 & G3 --> MQ
-    MQ --> P1
-    P1 --> T & M & L
+    MQ --> TP & MP & LP
+    TP --> T
+    MP --> M
+    LP --> L
     T & M & L --> S3
     T & M & L --> Graf
     
@@ -222,126 +696,541 @@ flowchart TB
     style L5 fill:#f3e5f5,stroke:#9c27b0
 ```
 
-### Layer Responsibilities
+### Layer-by-Layer Explanation
 
-| Layer | Purpose | Scaling Strategy |
-|-------|---------|------------------|
-| **Ingestion** | Receive telemetry from apps | Add more gateways |
-| **Buffering** | Decouple ingestion from processing | Add partitions |
-| **Processing** | Transform, sample, enrich | Add more consumers |
-| **Storage** | Persist and query data | Horizontal + object storage |
-| **Visualization** | Dashboards and alerts | Stateless, scale horizontally |
+#### Layer 1: Ingestion
 
-### Data Flow
+**Purpose:** Receive telemetry from all applications reliably.
 
-```mermaid
-sequenceDiagram
-    participant App as Application
-    participant LB as Load Balancer
-    participant GW as Gateway
-    participant MQ as Message Queue
-    participant Proc as Processor
-    participant Store as Storage
-    participant S3 as Object Storage
-    
-    App->>LB: OTLP telemetry
-    LB->>GW: Route to healthy gateway
-    GW->>MQ: Publish to queue
-    MQ->>Proc: Consume batch
-    Proc->>Store: Write to backend
-    Store->>S3: Flush to object storage
+**Components:**
+
+| Component | What It Does | Why We Need It |
+|-----------|--------------|----------------|
+| **Load Balancer** | Distributes traffic across gateways | No single point of failure, health-aware routing |
+| **Gateway Collectors** | Receive OTLP, validate, batch | Stateless, can scale horizontally |
+
+**How it works:**
+
+1. Applications send OTLP data to load balancer VIP
+2. Load balancer routes to healthy gateway
+3. Gateway validates data, batches it
+4. Gateway publishes to message queue
+
+**Scaling:** Add more gateway instances behind the load balancer.
+
+#### Layer 2: Buffering
+
+**Purpose:** Decouple ingestion from processing; absorb traffic spikes.
+
+**Why a message queue?**
+
+| Without Queue | With Queue |
+|---------------|------------|
+| Gateway waits for backend response | Gateway returns immediately |
+| Backend slowdown causes data loss | Data queued until backend recovers |
+| No replay capability | Can replay from any point |
+| Tight coupling | Loose coupling |
+
+**How it works:**
+
+1. Gateways publish to topic partitions
+2. Data is replicated across brokers (durability)
+3. Processors consume from assigned partitions
+4. Consumer offsets track progress
+
+**Queue topic design:**
+```
+Topics (partitioned for parallelism):
+├── otlp-traces    (12 partitions, 24h retention)
+├── otlp-metrics   (12 partitions, 24h retention)
+└── otlp-logs      (12 partitions, 24h retention)
 ```
 
-### Evolution Path
+#### Layer 3: Processing
 
-The architecture evolves through stages:
+**Purpose:** Transform, sample, enrich, and route telemetry.
 
-```mermaid
-flowchart LR
-    S1["Stage 1<br/>Single-Node"] --> S2["Stage 2<br/>+ Message Queue"]
-    S2 --> S3["Stage 3<br/>Kubernetes"]
-    S3 --> S4["Stage 4<br/>Multi-Region"]
-    
-    style S1 fill:#c8e6c9
-    style S2 fill:#fff3e0
-    style S3 fill:#e3f2fd
-    style S4 fill:#f3e5f5
-```
+**Processing functions:**
 
-| Stage | When to Move | Key Addition |
-|-------|--------------|--------------|
-| **1 → 2** | >50K events/sec or HA needed | Kafka/Redis queue |
-| **2 → 3** | >100K events/sec or K8s adoption | Kubernetes orchestration |
-| **3 → 4** | Multi-DC or compliance requirements | Geographic distribution |
+| Function | What It Does | Example |
+|----------|--------------|---------|
+| **Sampling** | Keep subset of data intelligently | Keep all errors, 10% of success |
+| **Filtering** | Drop unwanted data | Remove health check traces |
+| **Enrichment** | Add metadata | Add Kubernetes pod labels |
+| **Transformation** | Modify attributes | Rename fields, convert formats |
+| **Routing** | Send to different backends | Errors to one store, debug to another |
+
+**How it works:**
+
+1. Processors consume from Kafka
+2. Apply configured processing pipelines
+3. Export to appropriate storage backend
+4. Commit offset after successful export
+
+**Scaling:** Add more processor instances (Kafka rebalances partitions).
+
+#### Layer 4: Storage
+
+**Purpose:** Persist telemetry for querying and long-term retention.
+
+**Why different backends for each signal?**
+
+Each telemetry type has unique access patterns:
+
+| Signal | Access Pattern | Best Storage Type |
+|--------|----------------|-------------------|
+| **Traces** | Lookup by trace ID, search by attributes | Document store, columnar |
+| **Metrics** | Time-range queries, aggregations | Time-series database |
+| **Logs** | Full-text search, time-range | Inverted index, append-only |
+
+**How it works:**
+
+1. Hot data stored locally for fast queries
+2. Older data flushed to object storage (cheap)
+3. Compaction reduces storage footprint
+4. Queries check both hot and cold storage
+
+#### Layer 5: Visualization
+
+**Purpose:** Unified interface for exploring and alerting on all data.
+
+**Components:**
+
+| Component | What It Does |
+|-----------|--------------|
+| **Grafana** | Dashboards, exploration, alerting |
+| **PostgreSQL** | Shared state for HA (dashboards, users, alerts) |
+
+**Why PostgreSQL for Grafana HA?**
+
+Default Grafana uses SQLite (local file). For HA:
+- Multiple Grafana instances need shared state
+- PostgreSQL provides this shared state
+- Any Grafana instance can serve any request
 
 ---
 
-## Component Overview
+## Technology Deep Dive
 
-### Ingestion Layer
+### OpenTelemetry Collector
 
-**Purpose**: Receive telemetry from all applications with high availability.
+**What is it?**
 
-| Component | Role | Why |
-|-----------|------|-----|
-| **Load Balancer** | Distribute traffic | Health-aware routing, no SPOF |
-| **Gateway Collectors** | Receive & batch | Stateless, horizontally scalable |
+The OTel Collector is a vendor-agnostic telemetry processing pipeline. Think of it as a Swiss Army knife for observability data.
 
-**Technology Options**:
-- Load Balancer: HAProxy, NGINX, Cloud LB (ALB/NLB)
-- Gateways: OpenTelemetry Collector
+**Architecture:**
 
-### Buffering Layer
+```mermaid
+flowchart LR
+    subgraph Collector["OpenTelemetry Collector"]
+        subgraph Receivers["📥 Receivers"]
+            R1["OTLP"]
+            R2["Prometheus"]
+            R3["Jaeger"]
+            R4["Kafka"]
+        end
+        
+        subgraph Processors["⚙️ Processors"]
+            P1["batch"]
+            P2["memory_limiter"]
+            P3["filter"]
+            P4["attributes"]
+            P5["tail_sampling"]
+        end
+        
+        subgraph Exporters["📤 Exporters"]
+            E1["OTLP"]
+            E2["Prometheus"]
+            E3["Kafka"]
+            E4["Loki"]
+        end
+        
+        Receivers --> Processors --> Exporters
+    end
+```
 
-**Purpose**: Decouple ingestion from processing, absorb traffic spikes.
+**Key capabilities:**
+
+| Capability | Description | Use Case |
+|------------|-------------|----------|
+| **Multi-protocol** | Receives OTLP, Jaeger, Zipkin, Prometheus, etc. | Accept data from any source |
+| **Pipeline processing** | Chain processors for complex transformations | Filter → Batch → Export |
+| **Persistent queue** | Write to disk before export | Survive restarts without data loss |
+| **Memory limiting** | Cap memory usage | Prevent OOM in constrained environments |
+| **Health checking** | Expose health endpoints | Kubernetes readiness/liveness probes |
+
+**Deployment patterns:**
+
+| Pattern | Description | When to Use |
+|---------|-------------|-------------|
+| **Agent** | Runs alongside application | Low latency, local buffering |
+| **Gateway** | Standalone service receiving from agents | Centralized processing |
+| **Sidecar** | Container in same pod as application | Kubernetes deployments |
+
+### Apache Kafka
+
+**What is it?**
+
+Kafka is a distributed event streaming platform. It acts as a durable, high-throughput message queue.
+
+**Why Kafka for observability?**
+
+| Feature | Benefit for Observability |
+|---------|---------------------------|
+| **Durability** | Data persisted to disk, survives broker restarts |
+| **Replication** | Data copied to multiple brokers, survives broker failure |
+| **High throughput** | Millions of messages/second |
+| **Replay** | Re-process data from any point in time |
+| **Partitioning** | Parallel processing across consumers |
+
+**Kafka concepts:**
+
+```mermaid
+flowchart TB
+    subgraph Kafka["Kafka Cluster"]
+        subgraph Topic["Topic: otlp-traces"]
+            P0["Partition 0"]
+            P1["Partition 1"]
+            P2["Partition 2"]
+        end
+        
+        B0["Broker 0<br/>Leader: P0"]
+        B1["Broker 1<br/>Leader: P1"]
+        B2["Broker 2<br/>Leader: P2"]
+    end
+    
+    subgraph Consumers["Consumer Group"]
+        C0["Consumer 0<br/>← P0"]
+        C1["Consumer 1<br/>← P1"]
+        C2["Consumer 2<br/>← P2"]
+    end
+    
+    P0 --> C0
+    P1 --> C1
+    P2 --> C2
+```
+
+| Concept | Description |
+|---------|-------------|
+| **Topic** | Named stream of messages (like a table) |
+| **Partition** | Ordered, immutable sequence within a topic |
+| **Broker** | Kafka server, stores partitions |
+| **Producer** | Writes messages to topics |
+| **Consumer** | Reads messages from topics |
+| **Consumer Group** | Set of consumers that share work |
+
+**Sizing guidance:**
+
+| Scale | Brokers | Partitions/Topic | Throughput |
+|-------|---------|------------------|------------|
+| Small | 3 | 6 | ~100K events/sec |
+| Medium | 5 | 12 | ~500K events/sec |
+| Large | 9+ | 24+ | 1M+ events/sec |
+
+### Grafana Tempo
+
+**What is it?**
+
+Tempo is a distributed tracing backend that stores traces in object storage (S3, GCS, Azure Blob).
+
+**Why Tempo over Jaeger?**
+
+| Feature | Jaeger | Tempo |
+|---------|--------|-------|
+| **Storage** | Cassandra, Elasticsearch, Badger | Object storage (S3) |
+| **Cost** | Higher (compute for queries) | Lower (object storage is cheap) |
+| **Scalability** | Complex (requires Cassandra/ES scaling) | Simple (just add storage) |
+| **Query** | By trace ID, search by tags | By trace ID, TraceQL |
+| **Retention** | Limited by storage cost | Unlimited (object storage is cheap) |
+
+**Architecture:**
+
+```mermaid
+flowchart TB
+    subgraph Tempo["Tempo"]
+        D["Distributor<br/>Receives spans"]
+        I["Ingester<br/>Batches & writes"]
+        C["Compactor<br/>Optimizes storage"]
+        Q["Querier<br/>Executes queries"]
+    end
+    
+    OC["OTel Collector"] --> D
+    D --> I
+    I --> S3[("Object Storage")]
+    C --> S3
+    Q --> S3
+    Q --> G["Grafana"]
+    
+    style S3 fill:#fff3e0,stroke:#ff9800
+```
+
+**Key features:**
+
+| Feature | Description |
+|---------|-------------|
+| **TraceQL** | Powerful query language for traces |
+| **Search** | Find traces by service, duration, status |
+| **Trace to logs** | Link from trace span to related logs |
+| **Trace to metrics** | Generate metrics from traces |
+
+### Grafana Mimir
+
+**What is it?**
+
+Mimir is a horizontally scalable, highly available Prometheus-compatible metrics backend.
+
+**Why Mimir over Prometheus?**
+
+| Feature | Prometheus | Mimir |
+|---------|------------|-------|
+| **Scalability** | Single node | Horizontally scalable |
+| **Storage** | Local disk | Object storage |
+| **HA** | Federation (complex) | Built-in replication |
+| **Retention** | Limited by disk | Unlimited |
+| **Query** | PromQL | PromQL (same!) |
+
+**Architecture:**
+
+```mermaid
+flowchart TB
+    subgraph Mimir["Mimir"]
+        D["Distributor<br/>Receives writes"]
+        I["Ingester<br/>Recent data (2h)"]
+        SC["Store Gateway<br/>Historical data"]
+        Q["Querier<br/>Executes queries"]
+        C["Compactor<br/>Optimizes blocks"]
+    end
+    
+    P["Prometheus<br/>(remote write)"] --> D
+    D --> I
+    I --> S3[("Object Storage")]
+    SC --> S3
+    C --> S3
+    Q --> I
+    Q --> SC
+    Q --> G["Grafana"]
+    
+    style S3 fill:#fff3e0,stroke:#ff9800
+```
+
+**Key features:**
+
+| Feature | Description |
+|---------|-------------|
+| **100% Prometheus compatible** | Same PromQL, same remote write API |
+| **Global view** | Query across all data, not federated |
+| **Long-term storage** | Years of retention at low cost |
+| **Multi-tenancy** | Isolate data by tenant |
+
+### Grafana Loki
+
+**What is it?**
+
+Loki is a log aggregation system designed to be cost-effective and easy to operate.
+
+**Why Loki over Elasticsearch?**
+
+| Feature | Elasticsearch | Loki |
+|---------|---------------|------|
+| **Indexing** | Full-text index (expensive) | Labels only (cheap) |
+| **Storage** | ~10x raw size | ~3x raw size |
+| **Query** | Lucene syntax | LogQL |
+| **Ops complexity** | High (JVM tuning, sharding) | Low |
+| **Cost** | High | Low |
+
+**How Loki works:**
+
+Loki only indexes **labels** (metadata), not log content. This is the key to its efficiency:
+
+```
+Traditional (Elasticsearch):
+Index every word → Huge index → High cost
+
+Loki approach:
+Index only labels → Small index → Low cost
+┌─────────────────────────────────────────────────┐
+│ Labels (indexed):                               │
+│   app=api, env=prod, pod=api-xyz123            │
+│                                                 │
+│ Content (NOT indexed, just compressed):         │
+│   "2024-01-15 10:00:00 User 123 logged in"     │
+└─────────────────────────────────────────────────┘
+```
+
+**Querying:**
+1. First filter by labels (fast, uses index)
+2. Then grep through matching chunks (slower, but fewer chunks)
+
+**Architecture:**
+
+```mermaid
+flowchart TB
+    subgraph Loki["Loki"]
+        D["Distributor<br/>Receives logs"]
+        I["Ingester<br/>Builds chunks"]
+        Q["Querier<br/>Executes queries"]
+        C["Compactor<br/>Merges chunks"]
+    end
+    
+    OC["OTel Collector"] --> D
+    D --> I
+    I --> S3[("Object Storage")]
+    Q --> I
+    Q --> S3
+    C --> S3
+    Q --> G["Grafana"]
+    
+    style S3 fill:#fff3e0,stroke:#ff9800
+```
+
+### Object Storage (S3/MinIO/GCS)
+
+**Why object storage?**
 
 | Benefit | Description |
 |---------|-------------|
-| **Spike Absorption** | Queue buffers sudden traffic increases |
-| **Replay Capability** | Re-process data after failures |
-| **Back-pressure** | Slow consumers don't drop data |
+| **Cost** | ~$0.02/GB/month (vs. $0.10+ for SSD) |
+| **Durability** | 99.999999999% (11 nines) |
+| **Scalability** | Unlimited capacity |
+| **No management** | No disks to manage, replace, resize |
 
-**Technology Options**:
+**How it's used:**
 
-| Option | Best For | Complexity |
-|--------|----------|------------|
-| **Kafka** | High volume (>100K/sec) | High |
-| **Redis Streams** | Medium volume, simplicity | Medium |
-| **Persistent Queue** | Low volume, single-node | Low |
+| Component | What It Stores | Access Pattern |
+|-----------|----------------|----------------|
+| **Tempo** | Trace blocks | Write once, read for queries |
+| **Mimir** | Metric blocks | Write once, read for queries |
+| **Loki** | Log chunks | Write once, read for queries |
 
-### Processing Layer
+**Options:**
 
-**Purpose**: Transform, sample, enrich, and route telemetry.
+| Option | When to Use |
+|--------|-------------|
+| **AWS S3** | Running on AWS |
+| **GCS** | Running on GCP |
+| **Azure Blob** | Running on Azure |
+| **MinIO** | On-premises (S3-compatible) |
 
-| Function | Description |
-|----------|-------------|
-| **Sampling** | Reduce volume while preserving signal |
-| **Enrichment** | Add metadata (K8s labels, etc.) |
-| **Transformation** | Convert formats, rename attributes |
-| **Routing** | Send to appropriate backends |
+---
 
-**Technology**: OpenTelemetry Collector with processing pipelines
+## Data Flow & Processing
 
-### Storage Layer
+### End-to-End Data Flow
 
-**Purpose**: Persist telemetry for querying and analysis.
+Let's trace a request through the entire system:
 
-| Signal | Technology | Why |
-|--------|------------|-----|
-| **Traces** | Tempo | Native object storage, cost-effective |
-| **Metrics** | Mimir / VictoriaMetrics | Prometheus-compatible, scalable |
-| **Logs** | Loki | Low-cost, Grafana integration |
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application
+    participant SDK as OTel SDK
+    participant LB as Load Balancer
+    participant GW as Gateway Collector
+    participant K as Kafka
+    participant Proc as Processor Collector
+    participant Store as Tempo/Mimir/Loki
+    participant S3 as Object Storage
+    participant G as Grafana
+    
+    App->>SDK: Business logic executes
+    SDK->>SDK: Create spans, metrics, logs
+    SDK->>LB: OTLP/gRPC (batched)
+    LB->>GW: Route to healthy gateway
+    GW->>GW: Validate, enrich
+    GW->>K: Publish to topic
+    K->>K: Replicate to followers
+    K->>Proc: Consumer pulls batch
+    Proc->>Proc: Sample, transform
+    Proc->>Store: Write to backend
+    Store->>S3: Flush to object storage
+    G->>Store: Query data
+    Store->>G: Return results
+```
 
-**Object Storage**: S3, MinIO, GCS for long-term retention
+### Processing Pipeline Example
 
-### Visualization Layer
+Here's how a trace flows through the processing pipeline:
 
-**Purpose**: Dashboards, alerting, and data exploration.
+```
+INPUT: Raw span from application
+{
+  "trace_id": "abc123",
+  "span_id": "def456",
+  "name": "HTTP GET /api/users",
+  "duration_ms": 150,
+  "status": "OK",
+  "attributes": {
+    "http.method": "GET",
+    "http.url": "https://api.example.com/api/users?token=secret123",
+    "user.email": "john@example.com"
+  }
+}
 
-| Component | Role |
-|-----------|------|
-| **Grafana** | Unified UI for all signals |
-| **PostgreSQL** | Shared state for HA Grafana |
+↓ STEP 1: Memory Limiter
+(Ensures collector doesn't OOM)
+
+↓ STEP 2: Attribute Processor
+(Remove sensitive data)
+{
+  ...
+  "attributes": {
+    "http.method": "GET",
+    "http.url": "https://api.example.com/api/users?token=REDACTED",
+    "user.email": "REDACTED"
+  }
+}
+
+↓ STEP 3: Resource Processor
+(Add infrastructure metadata)
+{
+  ...
+  "resource": {
+    "service.name": "api-service",
+    "k8s.pod.name": "api-service-xyz123",
+    "k8s.namespace": "production"
+  }
+}
+
+↓ STEP 4: Tail Sampling
+(Decision: Keep this span? Yes - it's a user-facing API)
+
+↓ STEP 5: Batch Processor
+(Combine with other spans for efficient export)
+
+OUTPUT: Enriched, sanitized span sent to Tempo
+```
+
+### Sampling Strategies
+
+**Why sample?**
+
+At high volumes, storing every trace is:
+- Expensive (storage costs)
+- Unnecessary (most traces are uninteresting)
+- Noisy (harder to find important traces)
+
+**Sampling approaches:**
+
+| Strategy | How It Works | Pros | Cons |
+|----------|--------------|------|------|
+| **Head sampling** | Decide at trace start (random %) | Simple, low overhead | Might miss interesting traces |
+| **Tail sampling** | Decide after trace completes | Can keep all errors | Higher memory, latency |
+| **Rate limiting** | Keep N traces per second | Predictable volume | Might drop during spikes |
+
+**Recommended tail sampling policy:**
+
+```
+Keep these traces (100%):
+├── All errors (status = ERROR)
+├── Slow traces (duration > 1 second)
+├── Traces with specific attributes (user.id = "vip")
+└── Random 10% of remaining
+```
+
+This gives you:
+- **All problems** (errors, slow requests)
+- **Representative sample** of normal traffic
+- **Predictable storage** costs
 
 ---
 
@@ -349,191 +1238,330 @@ flowchart LR
 
 ### Sizing Tiers
 
-| Tier | Events/sec | Applications | Monthly Cost |
-|------|------------|--------------|--------------|
-| **Small** | <10K | 1-20 | $50-150 |
-| **Medium** | 10K-50K | 20-100 | $300-800 |
-| **Large** | 50K-200K | 100-500 | $1,500-4,000 |
-| **Enterprise** | >200K | 500+ | $5,000-15,000 |
+| Tier | Events/sec | Applications | Team Size | Recommended Setup |
+|------|------------|--------------|-----------|-------------------|
+| **Starter** | <5K | 1-10 | 1-5 | Single-node Docker |
+| **Small** | 5K-20K | 10-50 | 5-20 | Single-node (optimized) |
+| **Medium** | 20K-100K | 50-200 | 20-50 | Multi-node + Kafka |
+| **Large** | 100K-500K | 200-1000 | 50-200 | Kubernetes cluster |
+| **Enterprise** | >500K | 1000+ | 200+ | Multi-cluster K8s |
 
-### Small Tier (Single-Node)
+### Detailed Resource Requirements
 
-| Component | CPU | Memory | Storage |
-|-----------|-----|--------|---------|
-| OTel Collector | 2 | 2 GB | - |
-| Prometheus | 2 | 4 GB | 100 GB SSD |
-| Jaeger | 2 | 4 GB | 100 GB SSD |
-| Loki | 1 | 2 GB | 100 GB SSD |
-| Grafana | 1 | 1 GB | 10 GB |
-| **Total** | **8 cores** | **13 GB** | **310 GB** |
+#### Starter/Small Tier (Single Node)
 
-### Medium Tier (Multi-Node)
+| Component | CPU | Memory | Storage | Notes |
+|-----------|-----|--------|---------|-------|
+| OTel Collector | 2 cores | 2 GB | 20 GB (queue) | Persistent queue enabled |
+| Jaeger | 2 cores | 4 GB | 100 GB SSD | Badger storage |
+| Prometheus | 2 cores | 4 GB | 100 GB SSD | 30-day retention |
+| Loki | 1 core | 2 GB | 100 GB SSD | Filesystem storage |
+| Grafana | 1 core | 512 MB | 5 GB | Dashboards, SQLite |
+| **Total** | **8 cores** | **12.5 GB** | **325 GB SSD** | |
 
-| Component | Instances | CPU/each | Memory/each |
-|-----------|-----------|----------|-------------|
-| Load Balancer | 2 | 1 | 1 GB |
-| OTel Gateway | 3 | 2 | 2 GB |
-| Kafka | 3 | 2 | 4 GB |
-| OTel Processor | 3 | 2 | 4 GB |
-| Tempo | 3 | 2 | 4 GB |
-| Mimir | 3 | 4 | 8 GB |
-| Loki | 3 | 2 | 4 GB |
-| Grafana | 2 | 2 | 2 GB |
+**Recommended instance:** 8 vCPU, 16 GB RAM, 500 GB SSD
+**Cost estimate:** $100-200/month (cloud) or one-time $500-1000 (on-prem)
 
-### Large Tier (Kubernetes)
+#### Medium Tier (Multi-Node)
 
-| Component | Replicas | CPU Request | Memory Request |
-|-----------|----------|-------------|----------------|
-| OTel Gateway | 5-10 | 1 | 2 GB |
-| OTel Processor | 5-10 | 2 | 4 GB |
-| Kafka | 5+ | 4 | 8 GB |
-| Tempo | 3+ | 4 | 8 GB |
-| Mimir | 3+ | 4 | 16 GB |
-| Loki | 3+ | 2 | 8 GB |
+| Component | Instances | CPU/each | Memory/each | Storage/each |
+|-----------|-----------|----------|-------------|--------------|
+| HAProxy | 2 | 1 core | 1 GB | 10 GB |
+| OTel Gateway | 3 | 2 cores | 2 GB | 20 GB |
+| Kafka | 3 | 2 cores | 8 GB | 200 GB SSD |
+| OTel Processor | 3 | 2 cores | 4 GB | 20 GB |
+| Tempo | 3 | 2 cores | 4 GB | 50 GB + S3 |
+| Mimir | 3 | 2 cores | 8 GB | 50 GB + S3 |
+| Loki | 3 | 2 cores | 4 GB | 50 GB + S3 |
+| Grafana | 2 | 1 core | 1 GB | 10 GB |
+| PostgreSQL | 1 | 2 cores | 4 GB | 50 GB SSD |
 
-### Storage Estimation
+**Total:** ~50 cores, ~120 GB RAM, ~1.5 TB SSD + object storage
+**Cost estimate:** $800-1,500/month (cloud)
 
-**Formula**: `Daily Storage = Events/sec × 86,400 × Avg Size × Compression`
+#### Large Tier (Kubernetes)
 
-| Signal | Avg Size | Compression | 1K/sec = GB/day |
-|--------|----------|-------------|-----------------|
-| Traces | 1 KB | 10x | ~8 GB |
-| Metrics | 100 B | 15x | ~0.5 GB |
-| Logs | 500 B | 10x | ~4 GB |
+| Component | Min Replicas | Max Replicas | CPU Request | Memory Request |
+|-----------|--------------|--------------|-------------|----------------|
+| OTel Gateway | 5 | 20 | 1 core | 2 GB |
+| OTel Processor | 5 | 20 | 2 cores | 4 GB |
+| Kafka | 5 | 9 | 4 cores | 8 GB |
+| Tempo (all-in-one) | 3 | 6 | 4 cores | 8 GB |
+| Mimir (all-in-one) | 3 | 6 | 4 cores | 16 GB |
+| Loki (all-in-one) | 3 | 6 | 2 cores | 8 GB |
+| Grafana | 3 | 6 | 1 core | 1 GB |
 
-**Example**: 10K events/sec (mixed) ≈ 50-100 GB/day → 1.5-3 TB/month
+**Kubernetes cluster:** 20-50 nodes, 4-8 cores each
+**Cost estimate:** $3,000-8,000/month (cloud managed K8s)
+
+### Storage Estimation Formula
+
+```
+Daily Storage (GB) = (Events/sec × 86,400 × Avg Size in KB) / (1,000,000 × Compression Ratio)
+```
+
+| Signal | Avg Event Size | Compression | 1K events/sec = GB/day |
+|--------|----------------|-------------|------------------------|
+| Traces | 1 KB | 10x | 8.6 GB |
+| Metrics | 0.1 KB | 15x | 0.6 GB |
+| Logs | 0.5 KB | 10x | 4.3 GB |
+
+**Example calculation:**
+
+```
+10K events/sec (50% traces, 30% metrics, 20% logs):
+
+Traces:  5,000/sec × 8.6 GB = 43 GB/day
+Metrics: 3,000/sec × 0.6 GB = 1.8 GB/day
+Logs:    2,000/sec × 4.3 GB = 8.6 GB/day
+─────────────────────────────────────────
+Total:                        ~54 GB/day
+                              ~1.6 TB/month
+                              ~19 TB/year (before sampling)
+```
+
+With 10% sampling on traces: ~500 GB/month
 
 ---
 
-## Security Considerations
+## Security Architecture
 
-### Authentication
-
-| Layer | Method | Purpose |
-|-------|--------|---------|
-| **Ingestion** | mTLS, API Keys | Authenticate applications |
-| **Internal** | mTLS | Service-to-service auth |
-| **UI** | OAuth2/OIDC | User authentication |
-
-### Network Security
+### Authentication Layers
 
 ```mermaid
 flowchart TB
-    subgraph Public["Public Zone"]
-        Apps[Applications]
+    subgraph External["External (Untrusted)"]
+        Apps["Applications"]
+        Users["Users"]
     end
     
-    subgraph DMZ["DMZ"]
-        LB[Load Balancer]
+    subgraph Edge["Edge (DMZ)"]
+        LB["Load Balancer<br/>TLS termination"]
     end
     
-    subgraph Private["Private Zone"]
-        Collectors[Collectors]
-        Storage[Storage]
-        Grafana[Grafana]
+    subgraph Internal["Internal (Trusted)"]
+        GW["Gateways<br/>mTLS"]
+        Kafka["Kafka<br/>SASL/mTLS"]
+        Storage["Storage<br/>mTLS"]
+        Grafana["Grafana<br/>OAuth2/OIDC"]
     end
     
-    Apps -->|TLS| LB
-    LB -->|mTLS| Collectors
-    Collectors --> Storage
-    Storage --> Grafana
+    Apps -->|"mTLS or API Key"| LB
+    LB -->|"mTLS"| GW
+    GW -->|"SASL"| Kafka
+    Kafka -->|"SASL"| Storage
+    Users -->|"OAuth2/OIDC"| Grafana
     
-    style DMZ fill:#fff3e0
-    style Private fill:#e8f5e9
+    style External fill:#ffcdd2
+    style Edge fill:#fff3e0
+    style Internal fill:#c8e6c9
 ```
+
+### Authentication Methods by Layer
+
+| Layer | Method | How It Works |
+|-------|--------|--------------|
+| **App → Collector** | mTLS | Apps present client certificate |
+| **App → Collector** | API Key | Apps include key in header |
+| **Collector → Kafka** | SASL/SCRAM | Username/password authentication |
+| **Collector → Storage** | mTLS | Mutual TLS certificates |
+| **User → Grafana** | OAuth2/OIDC | SSO via identity provider |
 
 ### Data Protection
 
-| Concern | Solution |
-|---------|----------|
-| **Encryption at Rest** | Enable storage encryption |
-| **Encryption in Transit** | TLS everywhere |
-| **PII in Telemetry** | Use processors to scrub sensitive data |
-| **Access Control** | RBAC in Grafana, network segmentation |
+| Concern | Solution | Implementation |
+|---------|----------|----------------|
+| **Encryption in Transit** | TLS everywhere | Configure TLS on all services |
+| **Encryption at Rest** | Storage encryption | Enable S3/disk encryption |
+| **PII in Telemetry** | Attribute scrubbing | OTel processor removes sensitive fields |
+| **Access Control** | RBAC | Grafana roles, K8s RBAC |
+| **Audit Logging** | Access logs | Track who queried what |
 
-### Secrets Management
+### Sensitive Data Handling
 
-| Environment | Recommended |
-|-------------|-------------|
-| **Docker** | Docker Secrets, external secret store |
-| **Kubernetes** | External Secrets Operator, Vault |
-| **Cloud** | Native secret managers (AWS SM, GCP SM) |
+**Problem:** Applications may accidentally include PII in telemetry:
+- Passwords in URLs
+- Credit card numbers in logs
+- Email addresses in span attributes
+
+**Solution:** OTel Collector processors filter sensitive data:
+
+```yaml
+processors:
+  attributes:
+    actions:
+      # Remove sensitive query parameters
+      - key: http.url
+        action: hash  # or delete
+      
+      # Redact specific fields
+      - key: user.email
+        action: delete
+      
+      # Redact patterns (credit cards, SSNs)
+      - key: log.body
+        pattern: '\d{4}-\d{4}-\d{4}-\d{4}'
+        replacement: '[REDACTED]'
+```
+
+### Network Security
+
+**Recommended network zones:**
+
+| Zone | Components | Access |
+|------|------------|--------|
+| **Public** | None | Internet-facing |
+| **DMZ** | Load balancer | Apps can reach |
+| **Private** | All observability components | Internal only |
+| **Management** | SSH bastion, monitoring | Admins only |
+
+**Firewall rules:**
+
+| From | To | Port | Purpose |
+|------|----|----|---------|
+| Apps | Load Balancer | 4317, 4318 | OTLP ingestion |
+| Load Balancer | Gateways | 4317, 4318 | Internal routing |
+| Users | Grafana | 443 | Dashboard access |
+| Admins | Bastion | 22 | SSH access |
 
 ---
 
 ## Cost Analysis
 
-### Self-Hosted vs. Commercial
+### Self-Hosted vs. Commercial Comparison
 
-| Scale | Self-Hosted | Datadog | Savings |
-|-------|-------------|---------|---------|
-| 10K events/sec | $150/mo | $5,000/mo | 97% |
-| 50K events/sec | $800/mo | $25,000/mo | 97% |
-| 200K events/sec | $4,000/mo | $100,000/mo | 96% |
+| Scale | Self-Hosted Monthly | Datadog Monthly | New Relic Monthly | Savings |
+|-------|---------------------|-----------------|-------------------|---------|
+| 5K events/sec | $100 | $3,000 | $2,500 | 96-97% |
+| 20K events/sec | $300 | $12,000 | $10,000 | 97% |
+| 50K events/sec | $800 | $30,000 | $25,000 | 97% |
+| 100K events/sec | $2,000 | $60,000 | $50,000 | 96-97% |
+| 500K events/sec | $8,000 | $300,000 | $250,000 | 97% |
 
-*Self-hosted includes infrastructure only, not personnel*
+*Self-hosted costs include infrastructure only. Personnel costs for maintenance should be considered separately.*
 
 ### Cost Breakdown
 
-| Category | % of Total | Optimization |
+| Category | % of Total | Main Drivers |
 |----------|------------|--------------|
-| **Compute** | 40-50% | Right-size, spot instances |
-| **Storage** | 30-40% | Retention policies, sampling |
-| **Network** | 10-20% | Compress data, reduce cardinality |
+| **Compute** | 40-50% | Collector CPU, query processing |
+| **Storage** | 30-40% | Object storage, local SSD |
+| **Network** | 10-15% | Data transfer between components |
+| **Management** | 5-10% | Monitoring the monitoring |
 
-### Optimization Strategies
+### Cost Optimization Strategies
 
-| Strategy | Savings | Effort |
-|----------|---------|--------|
-| Aggressive sampling | 50-70% | Low |
-| Shorter retention | 20-40% | Low |
-| Object storage tiering | 30-50% | Medium |
-| Spot/preemptible instances | 60-80% | Medium |
-| Reduce metric cardinality | 20-50% | High |
+| Strategy | Potential Savings | Implementation Effort | Risk |
+|----------|-------------------|----------------------|------|
+| **Tail sampling** | 50-80% | Low | Medium (might miss data) |
+| **Shorter retention** | 20-50% | Low | Low |
+| **Spot instances** | 60-80% compute | Medium | Medium (interruptions) |
+| **Object storage tiering** | 30-50% storage | Medium | Low |
+| **Metric cardinality reduction** | 20-50% | High | Medium |
+| **Log filtering** | 30-70% | Medium | Medium |
 
-### Cloud vs. On-Prem
+### Total Cost of Ownership
 
-| Factor | Cloud | On-Premises |
-|--------|-------|-------------|
-| **Upfront Cost** | Low | High |
-| **Monthly Cost** | Higher | Lower |
-| **Elasticity** | High | Low |
-| **Maintenance** | Managed | Self-managed |
-| **Break-even** | N/A | ~18-24 months |
+**Hidden costs to consider:**
+
+| Cost Type | Description | Estimate |
+|-----------|-------------|----------|
+| **Personnel** | Engineers maintaining the system | 0.25-0.5 FTE |
+| **Training** | Learning new technologies | One-time, 1-2 weeks |
+| **On-call** | Incident response | Part of existing on-call |
+| **Upgrades** | Quarterly maintenance | 1-2 days/quarter |
+
+**Break-even analysis:**
+
+| Factor | Commercial | Self-Hosted |
+|--------|------------|-------------|
+| Monthly cost | $30,000 | $2,000 + $5,000 (0.25 FTE) |
+| Setup cost | Low | $10,000 (one-time) |
+| Break-even | N/A | ~2 months |
 
 ---
 
-## Decision Summary
+## Technology Decisions
 
-### Technology Choices
+### Decision Matrix
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| **Telemetry Standard** | OpenTelemetry | Vendor-neutral, broad SDK support |
-| **Message Queue** | Kafka (large), Redis (small) | Durability, replay capability |
-| **Trace Storage** | Tempo | Native object storage, cost-effective |
-| **Metrics Storage** | Mimir / VictoriaMetrics | Prometheus-compatible, scalable |
-| **Log Storage** | Loki | Low-cost, Grafana integration |
-| **Object Storage** | S3 / MinIO | Durable, cheap, scalable |
+| Decision | Options Considered | Choice | Rationale |
+|----------|-------------------|--------|-----------|
+| **Telemetry Standard** | OTel, Jaeger SDK, Vendor SDKs | OpenTelemetry | Vendor-neutral, future-proof |
+| **Message Queue** | Kafka, Redis, RabbitMQ, Pulsar | Kafka | Durability, throughput, ecosystem |
+| **Trace Storage** | Jaeger, Tempo, Zipkin | Tempo | Object storage, cost, simplicity |
+| **Metrics Storage** | Prometheus, Mimir, VictoriaMetrics, Thanos | Mimir | Scalability, Prometheus-compatible |
+| **Log Storage** | Loki, Elasticsearch, ClickHouse | Loki | Cost, simplicity, Grafana integration |
+| **Object Storage** | S3, MinIO, GCS | S3/MinIO | Cost, durability, compatibility |
+| **Visualization** | Grafana, Kibana, custom | Grafana | Unified view, community, features |
 
-### Trade-offs
+### Trade-offs Acknowledged
 
-| Benefit | Trade-off |
-|---------|-----------|
-| High availability | More infrastructure to manage |
-| Horizontal scale | Increased operational complexity |
-| Data durability | Higher storage costs |
-| Query performance | More memory/cache needed |
-| Self-hosted control | Engineering time for maintenance |
+| Benefit We Get | Trade-off We Accept |
+|----------------|---------------------|
+| Cost savings (97%) | Need to maintain infrastructure |
+| Full control | Need to handle upgrades |
+| Unlimited customization | More decisions to make |
+| No vendor lock-in | No vendor support |
+| Data privacy | Self-managed security |
 
-### Recommended Path
+### Recommended Evolution Path
 
-| Phase | Trigger | Action |
-|-------|---------|--------|
-| **Start** | Any new deployment | Single-node Docker Compose |
-| **Phase 2** | >50K/sec or HA required | Add Kafka, multi-node |
-| **Phase 3** | Kubernetes adoption | Helm deployment |
-| **Phase 4** | Multi-region required | Geographic distribution |
+| Stage | Trigger | What Changes | Timeline |
+|-------|---------|--------------|----------|
+| **Start** | New deployment | Single-node Docker Compose | Day 1 |
+| **Stage 2** | >50K/sec OR HA needed | Add Kafka, multi-node | When needed |
+| **Stage 3** | K8s adoption | Helm deployment | When K8s available |
+| **Stage 4** | Multi-region | Geographic distribution | Enterprise scale |
+
+---
+
+## Appendix: Quick Reference
+
+### Capacity Planning Cheat Sheet
+
+| Events/sec | Setup | Compute | Storage/month | Cost/month |
+|------------|-------|---------|---------------|------------|
+| <5K | Single Docker | 8 CPU, 16 GB | 100 GB | $50-100 |
+| 5K-20K | Single (optimized) | 16 CPU, 32 GB | 500 GB | $150-300 |
+| 20K-100K | Multi-node | 50 CPU, 120 GB | 2 TB + S3 | $800-1,500 |
+| 100K-500K | Kubernetes | 200 CPU, 500 GB | 10 TB S3 | $3,000-8,000 |
+
+### Port Reference
+
+| Service | Port | Protocol | Purpose |
+|---------|------|----------|---------|
+| OTel Collector | 4317 | gRPC | OTLP ingestion |
+| OTel Collector | 4318 | HTTP | OTLP ingestion |
+| OTel Collector | 13133 | HTTP | Health check |
+| Prometheus | 9090 | HTTP | API and UI |
+| Tempo | 3200 | HTTP | API |
+| Tempo | 4317 | gRPC | OTLP ingestion |
+| Loki | 3100 | HTTP | API |
+| Grafana | 3000 | HTTP | UI |
+| Kafka | 9092 | TCP | Client connections |
+
+### Component Selection Guide
+
+| Need | Simple | Scalable | Enterprise |
+|------|--------|----------|------------|
+| **Traces** | Jaeger (all-in-one) | Tempo | Tempo + S3 |
+| **Metrics** | Prometheus | Mimir | Mimir + S3 |
+| **Logs** | Loki (single) | Loki (simple scalable) | Loki (microservices) |
+| **Queue** | OTel persistent queue | Redis Streams | Kafka |
+| **Storage** | Local SSD | MinIO | S3/GCS/Azure Blob |
+
+### When NOT to Scale
+
+Stay on single-node if:
+
+- [ ] Throughput is consistently <50K events/sec
+- [ ] Uptime SLA is <99.9% (some downtime acceptable)
+- [ ] Team lacks Kubernetes expertise (and no plans to adopt)
+- [ ] Budget is highly constrained
+- [ ] Telemetry is non-critical (nice-to-have, not need-to-have)
+
+In these cases, optimize the single-node setup with persistent queues, resource limits, and backups.
 
 ---
 
@@ -546,33 +1574,3 @@ Ready to implement? See the [Implementation Guide](./implementation-guide.md) fo
 | [Implementation Guide](./implementation-guide.md) | Step-by-step deployment |
 | [Config Files](./configs/) | All configuration files |
 | [Main README](../../README.md) | Project overview |
-
----
-
-## Appendix: Quick Reference
-
-### Capacity Planning Cheat Sheet
-
-| Events/sec | Recommended Setup | Est. Monthly Cost |
-|------------|-------------------|-------------------|
-| <10K | Single-node Docker | $50-150 |
-| 10K-50K | Multi-node + Kafka | $300-800 |
-| 50K-200K | Kubernetes cluster | $1,500-4,000 |
-| >200K | Multi-cluster K8s | $5,000+ |
-
-### Component Selection Matrix
-
-| Need | Traces | Metrics | Logs |
-|------|--------|---------|------|
-| **Simple** | Jaeger | Prometheus | Loki |
-| **Scale** | Tempo | Mimir | Loki (microservices) |
-| **Enterprise** | Tempo + S3 | Mimir/VM + S3 | Loki + S3 |
-
-### When NOT to Scale
-
-- Events <50K/sec AND uptime SLA <99.9%
-- Team lacks Kubernetes expertise
-- Budget constraints for infrastructure
-- Telemetry is non-critical to business
-
-In these cases, optimize the single-node setup instead.
