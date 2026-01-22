@@ -6,9 +6,65 @@ A production-ready, reliable observability infrastructure for any application. G
 
 - Docker Engine 20.10+
 - Docker Compose v2+ (for resource limits)
-- ~8GB RAM recommended for the full stack
-- ~20GB disk space for data retention
 - Linux recommended for full host metrics (see [macOS note](#macos-note))
+
+### System Resources
+
+| Scenario | CPU | RAM | Disk | Use Case |
+|----------|-----|-----|------|----------|
+| **Minimum** | 4 cores | 8 GB | 20 GB | Development, light testing |
+| **Recommended** | 8 cores | 16 GB | 50 GB | Small production, <10 apps |
+| **Production** | 12+ cores | 24+ GB | 100+ GB | Medium production, 10-50 apps |
+
+**Per-Service Resource Limits (pre-configured):**
+
+| Service | CPU Limit | Memory Limit | CPU Reserved | Memory Reserved |
+|---------|-----------|--------------|--------------|-----------------|
+| Jaeger | 2 cores | 4 GB | 0.5 cores | 1 GB |
+| Prometheus | 2 cores | 4 GB | 0.5 cores | 1 GB |
+| OTel Collector | 2 cores | 2 GB | 0.5 cores | 512 MB |
+| Loki | 1 core | 2 GB | 0.25 cores | 512 MB |
+| Grafana | 1 core | 1 GB | 0.25 cores | 256 MB |
+| Node Exporter | 0.5 cores | 256 MB | 0.1 cores | 64 MB |
+| **Total** | **8.5 cores** | **13.25 GB** | **2.1 cores** | **3.3 GB** |
+
+> **Note:** "Reserved" resources are guaranteed minimums. "Limits" are maximums under load. Actual usage at idle is much lower (~2 cores, ~4GB RAM).
+
+### Disk Space
+
+| Data Type | Default Retention | Est. Size/Day | 30-Day Storage |
+|-----------|-------------------|---------------|----------------|
+| Traces (Jaeger) | 30 days | 1-5 GB | 30-150 GB |
+| Metrics (Prometheus) | 30 days | 500 MB-2 GB | 15-60 GB |
+| Logs (Loki) | 30 days | 1-10 GB | 30-300 GB |
+| Container logs | Rotated | Max 790 MB | 790 MB |
+
+> Disk usage varies significantly based on telemetry volume. Start with 50GB and monitor usage.
+
+### Network
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 4317 | TCP (gRPC) | OTLP telemetry ingestion |
+| 4318 | TCP (HTTP) | OTLP telemetry ingestion |
+| 3000 | TCP | Grafana UI |
+| 16686 | TCP | Jaeger UI |
+| 9090 | TCP | Prometheus UI |
+| 3100 | TCP | Loki API |
+| 9100 | TCP | Node Exporter metrics |
+
+### Capacity Guidelines
+
+This single-node setup handles approximately:
+
+| Metric | Light Load | Moderate Load | Heavy Load |
+|--------|------------|---------------|------------|
+| Spans/second | <1,000 | 1,000-10,000 | 10,000-50,000 |
+| Metric series | <100,000 | 100,000-500,000 | 500,000-1,000,000 |
+| Log lines/second | <1,000 | 1,000-10,000 | 10,000-50,000 |
+| Connected apps | 1-5 | 5-20 | 20-50 |
+
+For higher loads, see [Scaling Guide](#scaling-guide).
 
 ## Quick Start
 
@@ -237,6 +293,157 @@ docker inspect --format='{{.LogPath}}' otel-collector
 
 **Note:** These are Docker container logs (stdout/stderr). Your application logs sent via OTLP are stored in Loki and viewable in Grafana.
 
+### Failure Behavior & Error Handling
+
+Understanding how the system behaves during failures helps you operate it confidently.
+
+#### What Happens When Components Fail
+
+| Component | If It Fails | Data Impact | Auto-Recovery |
+|-----------|-------------|-------------|---------------|
+| **OTel Collector** | Apps get connection errors | Queued data persists on disk, replays on restart | Yes (health check) |
+| **Jaeger** | Collector queues traces | No trace loss (queued) | Yes (health check) |
+| **Prometheus** | Metrics scraping stops | Gap in metrics during downtime | Yes (health check) |
+| **Loki** | Collector queues logs | No log loss (queued) | Yes (health check) |
+| **Grafana** | Dashboards unavailable | No data loss (read-only) | Yes (health check) |
+| **Node Exporter** | Host metrics stop | Gap in host metrics | Yes (health check) |
+
+#### Data Flow Under Pressure
+
+```
+Normal Load:
+  App → Collector → Backend    [All data flows through]
+
+Backend Slow/Down:
+  App → Collector → [Queue fills] → Backend
+                    ↓
+              Queue persisted to disk (survives restart)
+
+Queue Full (extreme):
+  App → Collector → [Queue FULL] → Backpressure to app
+                                   (app retries or drops)
+```
+
+#### Retry & Backpressure Behavior
+
+| Scenario | Behavior | Configuration |
+|----------|----------|---------------|
+| **Backend temporarily down** | Retry with exponential backoff (1s → 60s) | `retry_on_failure` in collector |
+| **Backend slow** | Queue fills, continues retrying | `sending_queue.queue_size: 10000` |
+| **Queue full** | Backpressure applied, oldest data may drop | Memory limiter triggers |
+| **Collector memory high** | Refuses new data temporarily | `memory_limiter` processor |
+| **Collector restart** | Queue replays from disk | `file_storage` extension |
+
+#### Error Handling Timeline
+
+```
+t=0s    Backend goes down
+t=1s    First retry attempt
+t=2s    Second retry (exponential backoff)
+t=4s    Third retry
+...
+t=60s   Retries capped at 60s intervals
+t=300s  Max elapsed time - data export fails, next batch tried
+        (Queue preserves data, keeps retrying)
+
+Meanwhile: Queue fills on disk, up to 10,000 items per exporter
+```
+
+### Recovery Procedures
+
+#### Service Won't Start
+
+```bash
+# Check what's wrong
+docker compose logs <service-name> --tail 50
+
+# Common fixes:
+docker compose down                    # Clean shutdown
+docker volume ls                       # Check volumes exist
+docker compose up -d                   # Restart
+make status                            # Verify health
+```
+
+#### Data Corruption Recovery
+
+```bash
+# Option 1: Restore from backup
+./scripts/restore.sh ./backups/<latest>
+
+# Option 2: Reset specific service (loses that service's data)
+docker compose stop <service>
+docker volume rm opensource-otel-setup_<service>-data
+docker compose up -d <service>
+
+# Option 3: Full reset (loses ALL data)
+make clean                             # Requires confirmation
+make up
+```
+
+#### High Memory / OOM Issues
+
+```bash
+# Check current memory usage
+docker stats --no-stream
+
+# Reduce retention (less data stored)
+# Edit .env:
+TRACES_RETENTION=168h    # 7 days instead of 30
+METRICS_RETENTION=7d
+LOGS_RETENTION=168h
+
+# Restart to apply
+make restart
+```
+
+#### Queue Building Up (Data Backlog)
+
+```bash
+# Check queue size
+curl -s http://localhost:8888/metrics | grep queue_size
+
+# If queue is full, check backend health:
+make status
+
+# Force restart collector to replay queue
+docker compose restart otel-collector
+```
+
+### Troubleshooting
+
+| Symptom | Likely Cause | Solution |
+|---------|--------------|----------|
+| No traces in Jaeger | Collector not receiving data | Check app config, verify `localhost:4317` reachable |
+| No metrics in Prometheus | Scrape targets down | Check http://localhost:9090/targets |
+| No logs in Loki | Log pipeline issue | Check `make logs-collector` for errors |
+| High memory usage | Too much data / long retention | Reduce retention, add sampling |
+| Disk filling up | Data retention too long | Reduce retention, run `make clean` |
+| Services keep restarting | Resource limits too low | Increase limits in `docker-compose.yml` |
+| "Connection refused" | Service not ready | Wait for health checks, check `make status` |
+| Slow queries in Grafana | Too much data to scan | Add time filters, reduce retention |
+
+#### Debug Checklist
+
+```bash
+# 1. Check all services are healthy
+make status
+
+# 2. Check for resource issues
+docker stats --no-stream
+
+# 3. Check collector is receiving data
+curl -s http://localhost:8888/metrics | grep otelcol_receiver
+
+# 4. Check for export errors
+curl -s http://localhost:8888/metrics | grep otelcol_exporter
+
+# 5. Check active alerts
+make alerts
+
+# 6. View recent logs
+make logs-collector | tail -100
+```
+
 ## Configuration
 
 Create a `.env` file to customize settings:
@@ -254,16 +461,9 @@ cp env.example .env
 | `LOGS_RETENTION` | 720h (30d) | How long to keep logs |
 | `GRAFANA_ADMIN_PASSWORD` | admin | Grafana admin password |
 
-### Resource Limits (Pre-configured)
+### Resource Limits
 
-| Service | CPU | Memory |
-|---------|-----|--------|
-| OTel Collector | 2 cores | 2 GB |
-| Prometheus | 2 cores | 4 GB |
-| Jaeger | 2 cores | 4 GB |
-| Loki | 1 core | 2 GB |
-| Grafana | 1 core | 1 GB |
-| Node Exporter | 0.5 cores | 256 MB |
+See [System Resources](#system-resources) for detailed CPU/memory limits per service.
 
 ## Architecture
 
@@ -370,12 +570,35 @@ The infrastructure alerts (disk, memory, CPU) will still work but will monitor t
 
 ## Scaling Guide
 
-This single-node setup handles:
-- ~50K spans/second
-- ~500K active metric series
-- ~100MB/s log ingestion
+### When to Scale
 
-For larger workloads, see [Architecture Proposal](docs/scalable-architecture-proposal.md) for horizontal scaling with Kafka, Kubernetes, and distributed storage.
+Monitor these metrics to know when you're approaching limits:
+
+```bash
+make metrics   # View current throughput
+make alerts    # Check for capacity warnings
+```
+
+**Signs you need to scale:**
+- Collector queue size consistently > 5000
+- Memory usage > 80% of limits
+- Query latency increasing
+- Dropped spans/metrics alerts firing
+
+### Scaling Options
+
+| Approach | When to Use | Complexity |
+|----------|-------------|------------|
+| **Vertical** (more CPU/RAM) | First option, up to 16 cores/32GB | Low |
+| **Retention reduction** | Storage issues | Low |
+| **Sampling** | High trace volume | Medium |
+| **Horizontal** (multiple nodes) | Beyond single-node limits | High |
+
+### Single-Node Limits
+
+See [Capacity Guidelines](#capacity-guidelines) for detailed throughput limits.
+
+For workloads exceeding 50K spans/second or 1M metric series, see [Architecture Proposal](docs/scalable-architecture-proposal.md) for horizontal scaling with Kafka, Kubernetes, and distributed storage.
 
 ## License
 
