@@ -2,6 +2,13 @@
 
 A production-ready, reliable observability infrastructure for any application. Get distributed tracing, metrics, and logging in minutes.
 
+## Requirements
+
+- Docker Engine 20.10+
+- Docker Compose v2+ (for resource limits)
+- ~8GB RAM recommended for the full stack
+- ~20GB disk space for data retention
+
 ## Quick Start
 
 ```bash

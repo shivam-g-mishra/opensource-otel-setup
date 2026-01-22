@@ -91,12 +91,13 @@ echo ""
 
 # Create backup manifest
 echo -e "${BLUE}Creating backup manifest...${NC}"
+VOLUMES_JSON=$(echo "$VOLUMES" | tr ' ' '\n' | grep -v '^$' | sed 's/.*/"&"/' | paste -sd ',' -)
 cat > "${BACKUP_PATH}/manifest.json" << EOF
 {
   "timestamp": "${TIMESTAMP}",
   "date": "$(date -Iseconds)",
   "version": "1.0",
-  "volumes": [$(echo $VOLUMES | tr ' ' '\n' | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//')],
+  "volumes": [${VOLUMES_JSON}],
   "host": "$(hostname)",
   "docker_version": "$(docker --version | cut -d' ' -f3 | tr -d ',')"
 }

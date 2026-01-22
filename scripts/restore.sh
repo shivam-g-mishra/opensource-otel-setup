@@ -33,6 +33,20 @@ VOLUMES_ONLY=false
 CONFIGS_ONLY=false
 FORCE=false
 
+show_help() {
+    echo "Usage: $0 [OPTIONS] <backup_path>"
+    echo ""
+    echo "Options:"
+    echo "  --volumes-only    Only restore volumes, not configs"
+    echo "  --configs-only    Only restore configs, not volumes"
+    echo "  --force           Skip confirmation prompt"
+    echo "  --help            Show this help message"
+    echo ""
+    echo "Example:"
+    echo "  $0 ./backups/20260122_020000"
+    exit 0
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --volumes-only)
@@ -46,6 +60,9 @@ while [[ $# -gt 0 ]]; do
         --force)
             FORCE=true
             shift
+            ;;
+        --help|-h)
+            show_help
             ;;
         *)
             BACKUP_PATH="$1"
@@ -127,9 +144,10 @@ if [ "$CONFIGS_ONLY" != true ]; then
         
         volume_name="${filename%.tar.gz}"
         
-        # Try different volume naming conventions
+        # Try different volume naming conventions (Docker Compose uses directory name as prefix)
         full_volume_name=""
-        for prefix in "opensource-otel-setup_" "otel_" ""; do
+        project_name=$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+        for prefix in "${project_name}_" "opensource-otel-setup_" "otel_" ""; do
             test_name="${prefix}${volume_name}"
             if docker volume inspect "$test_name" > /dev/null 2>&1; then
                 full_volume_name="$test_name"
@@ -139,9 +157,9 @@ if [ "$CONFIGS_ONLY" != true ]; then
         
         echo -n "  Restoring ${volume_name}... "
         
-        # Create volume if it doesn't exist
+        # Create volume if it doesn't exist (use project prefix for consistency)
         if [ -z "$full_volume_name" ]; then
-            full_volume_name="${volume_name}"
+            full_volume_name="${project_name}_${volume_name}"
             docker volume create "$full_volume_name" > /dev/null 2>&1 || true
         fi
         

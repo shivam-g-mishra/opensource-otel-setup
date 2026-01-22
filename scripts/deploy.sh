@@ -33,6 +33,24 @@ NC='\033[0m'
 # Parse arguments
 SKIP_BACKUP=false
 PULL_IMAGES=false
+PROFILE=""
+
+show_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --quick           Skip backup (faster deployment)"
+    echo "  --pull            Pull latest images before deploying"
+    echo "  --profile <name>  Use specific profile (seq, full)"
+    echo "  --help            Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                # Normal deployment with backup"
+    echo "  $0 --quick        # Quick deployment without backup"
+    echo "  $0 --pull         # Pull latest images and deploy"
+    echo "  $0 --profile seq  # Deploy with Seq profile"
+    exit 0
+}
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -44,11 +62,24 @@ while [[ $# -gt 0 ]]; do
             PULL_IMAGES=true
             shift
             ;;
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_help
+            ;;
         *)
             shift
             ;;
     esac
 done
+
+# Build profile argument
+PROFILE_ARG=""
+if [ -n "$PROFILE" ]; then
+    PROFILE_ARG="--profile $PROFILE"
+fi
 
 cd "$PROJECT_DIR"
 
@@ -77,14 +108,14 @@ echo ""
 
 # Step 3: Gracefully stop services
 echo -e "${BLUE}Step 3/5: Stopping services gracefully...${NC}"
-docker compose stop --timeout 30 2>/dev/null || docker compose stop
+docker compose $PROFILE_ARG stop --timeout 30 2>/dev/null || docker compose stop --timeout 30 2>/dev/null || docker compose stop
 echo -e "  ${GREEN}Services stopped${NC}"
 echo ""
 
 # Step 4: Pull new images (optional)
 if [ "$PULL_IMAGES" = true ]; then
     echo -e "${BLUE}Step 4/5: Pulling latest images...${NC}"
-    docker compose pull
+    docker compose $PROFILE_ARG pull
     echo -e "  ${GREEN}Images updated${NC}"
 else
     echo -e "${BLUE}Step 4/5: Skipping image pull (use --pull to update)${NC}"
@@ -93,7 +124,7 @@ echo ""
 
 # Step 5: Start services
 echo -e "${BLUE}Step 5/5: Starting services...${NC}"
-docker compose up -d
+docker compose $PROFILE_ARG up -d
 echo -e "  ${GREEN}Services started${NC}"
 echo ""
 

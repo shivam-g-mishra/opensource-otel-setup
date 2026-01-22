@@ -159,6 +159,7 @@ services:
       - "8888:8888"                       # Prometheus metrics (self)
       - "8889:8889"                       # Prometheus exporter
       - "13133:13133"                     # Health check
+      - "1888:1888"                       # pprof (profiling)
       - "55679:55679"                     # ZPages (debug)
     networks:
       - observability
@@ -259,6 +260,12 @@ services:
         reservations:
           cpus: '0.25'
           memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 networks:
   observability:
