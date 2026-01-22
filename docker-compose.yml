@@ -127,6 +127,27 @@ services:
     restart: unless-stopped
 
   # ===========================================
+  # Loki - Log Aggregation
+  # ===========================================
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: otel-loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/loki-config.yaml
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
   # OpenTelemetry Collector - Unified Pipeline
   # ===========================================
   otel-collector:
@@ -147,6 +168,7 @@ services:
     depends_on:
       - jaeger
       - prometheus
+      - loki
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
@@ -165,4 +187,6 @@ volumes:
   grafana-data:
     driver: local
   seq-data:
+    driver: local
+  loki-data:
     driver: local

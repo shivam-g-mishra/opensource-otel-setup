@@ -45,6 +45,7 @@ check_service() {
 check_service "Jaeger" "http://localhost:${JAEGER_UI_PORT:-16686}"
 check_service "Grafana" "http://localhost:${GRAFANA_PORT:-3000}/api/health"
 check_service "Prometheus" "http://localhost:${PROMETHEUS_PORT:-9090}/-/healthy"
+check_service "Loki" "http://localhost:${LOKI_PORT:-3100}/ready"
 check_service "OTel Collector" "http://localhost:13133/health"
 
 # Check if Seq is running

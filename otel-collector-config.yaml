@@ -134,9 +134,25 @@ exporters:
     resource_to_telemetry_conversion:
       enabled: true                   # Include resource attributes as labels
 
+  # Loki exporter - for logs
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    tls:
+      insecure: true
+    # Default labels added to all log streams
+    default_labels_enabled:
+      exporter: true
+      job: true
+    # Retry configuration for fault tolerance
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
   # Debug logging - useful for troubleshooting
-  logging:
-    loglevel: info                    # debug, info, warn, error
+  debug:
+    verbosity: normal                 # detailed, normal, basic
     sampling_initial: 5               # Log first N of each type
     sampling_thereafter: 200          # Then log every Nth
 
@@ -188,16 +204,16 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource, attributes]
-      exporters: [otlp/jaeger, logging]
+      exporters: [otlp/jaeger, debug]
     
     # Metrics pipeline
     metrics:
       receivers: [otlp, prometheus]
       processors: [memory_limiter, batch, resource, attributes]
-      exporters: [prometheus, logging]
+      exporters: [prometheus, debug]
     
-    # Logs pipeline (if you send logs via OTLP)
+    # Logs pipeline - exports to Loki for querying in Grafana
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [logging]
+      processors: [memory_limiter, batch, resource]
+      exporters: [loki, debug]

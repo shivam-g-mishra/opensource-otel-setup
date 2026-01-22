@@ -52,9 +52,10 @@ echo -e "${BLUE}Access URLs:${NC}"
 echo -e "  📊 Jaeger (Traces):     ${GREEN}http://localhost:${JAEGER_UI_PORT:-16686}${NC}"
 echo -e "  📈 Grafana (Dashboards): ${GREEN}http://localhost:${GRAFANA_PORT:-3000}${NC}  (admin/admin)"
 echo -e "  🔍 Prometheus (Metrics): ${GREEN}http://localhost:${PROMETHEUS_PORT:-9090}${NC}"
+echo -e "  📜 Loki (Logs):         ${GREEN}http://localhost:${LOKI_PORT:-3100}${NC}"
 
 if [[ "$1" == "--full" ]] || [[ "$1" == "--seq" ]]; then
-    echo -e "  📝 Seq (Logs):          ${GREEN}http://localhost:${SEQ_UI_PORT:-5380}${NC}"
+    echo -e "  📝 Seq (.NET Logs):     ${GREEN}http://localhost:${SEQ_UI_PORT:-5380}${NC}"
 fi
 
 echo ""

@@ -38,16 +38,16 @@ datasources:
     editable: false
     jsonData:
       tracesToLogs:
-        datasourceUid: ''
-        tags: []
-        mappedTags: []
-        mapTagNamesEnabled: false
-        spanStartTimeShift: ''
-        spanEndTimeShift: ''
-        filterByTraceID: false
+        datasourceUid: 'loki'
+        tags: ['service.name']
+        mappedTags: [{ key: 'service.name', value: 'service_name' }]
+        mapTagNamesEnabled: true
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: true
         filterBySpanID: false
       tracesToMetrics:
-        datasourceUid: Prometheus
+        datasourceUid: 'prometheus'
         tags: []
         queries: []
       nodeGraph:
@@ -59,3 +59,24 @@ datasources:
       spanBar:
         type: 'Tag'
         tag: 'http.status_code'
+
+  # -----------------------------------------
+  # Loki - Logs
+  # -----------------------------------------
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: 'jaeger'
+          matcherRegex: '"trace_id":"(\w+)"'
+          name: TraceID
+          url: '$${__value.raw}'
+        - datasourceUid: 'jaeger'
+          matcherRegex: 'trace_id=(\w+)'
+          name: TraceID
+          url: '$${__value.raw}'
