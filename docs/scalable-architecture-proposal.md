@@ -1,56 +1,532 @@
 # Scalable OpenTelemetry Observability Stack
-## Architecture Proposal
+## Architecture Document
 
-**Version:** 1.6  
+**Version:** 2.0  
 **Date:** January 2026  
-**Status:** Proposal
+**Status:** Approved for Implementation  
+**Author:** Platform Engineering Team
+
+---
+
+## Document Information
+
+### Purpose
+
+This document defines the architecture for a self-hosted, scalable observability platform built on OpenTelemetry. It serves as the authoritative reference for:
+
+- Understanding the current observability infrastructure
+- Evaluating when and why to scale
+- Planning infrastructure investments
+- Guiding implementation decisions
+- Troubleshooting operational issues
+
+### Audience
+
+| Audience | Sections of Interest |
+|----------|---------------------|
+| **Engineering Leadership** | Executive Summary, Current State, Cost Analysis |
+| **Platform Engineers** | All sections, especially Architecture & Implementation |
+| **DevOps/SRE Teams** | Deployment, Operations, Troubleshooting |
+| **Application Developers** | Integration guides, SDK configuration |
 
 ### Revision History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | Jan 2026 | Initial proposal |
-| 1.1 | Jan 2026 | Added single-node reliability section |
-| 1.2 | Jan 2026 | Synced with implementation, added security & cost optimization |
-| 1.3 | Jan 2026 | Added On-Prem & Cloud scaling sections, load balancer configs, Terraform examples |
-| 1.4 | Jan 2026 | Converted all diagrams to Mermaid for better rendering |
-| 1.5 | Jan 2026 | Added comprehensive Infrastructure & Resource Requirements section |
-| 1.6 | Jan 2026 | Added Challenges & Troubleshooting section with common issues and solutions |
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0 | Jan 2026 | Platform Team | Initial proposal |
+| 1.5 | Jan 2026 | Platform Team | Added scaling, infrastructure, troubleshooting |
+| 2.0 | Jan 2026 | Platform Team | Restructured as formal architecture document with clear narrative flow |
 
 ---
 
 ## Table of Contents
 
-1. [Single-Node Reliability Improvements](#single-node-reliability-improvements) ⭐ **START HERE**
-2. [Current Architecture](#current-architecture-single-node)
-3. [Scalable Architecture](#proposed-scalable-architecture)
-4. [Deployment Options](#deployment-options)
-5. [On-Premises Scaling](#on-premises-scaling)
-6. [Cloud Scaling](#cloud-scaling)
-7. [Infrastructure & Resource Requirements](#infrastructure--resource-requirements)
-8. [Security Considerations](#security-considerations)
-9. [Cost Optimization](#cost-optimization)
-10. [Challenges & Troubleshooting](#challenges--troubleshooting) 🆕
-11. [Implementation Phases](#implementation-phases)
-12. [Appendices](#appendix-a-alternative-architectures)
+### Part I: Context & Analysis
+1. [Executive Summary](#executive-summary) — Why self-hosted observability
+2. [Current State Analysis](#current-state-analysis) — What we have today
+3. [Problem Statement](#problem-statement) — When and why to scale
+4. [Solution Overview](#solution-overview) — High-level approach
+
+### Part II: Architecture
+5. [Target Architecture](#target-architecture) — Scalable design
+6. [Component Deep Dive](#component-deep-dive) — Layer-by-layer details
+7. [Scaling Strategies](#scaling-strategies) — Multi-node design
+8. [Deployment Options](#deployment-options) — Docker, K8s, Ansible
+
+### Part III: Implementation
+9. [Single-Node Optimization](#single-node-optimization) — Maximize before scaling
+10. [On-Premises Scaling](#on-premises-scaling) — Docker Swarm, bare metal
+11. [Cloud Scaling](#cloud-scaling) — AWS, GCP, Azure
+
+### Part IV: Operations
+12. [Infrastructure Requirements](#infrastructure--resource-requirements) — Sizing & capacity
+13. [Security Considerations](#security-considerations) — Auth, TLS, secrets
+14. [Cost Optimization](#cost-optimization) — Reduce expenses
+15. [Challenges & Troubleshooting](#challenges--troubleshooting) — Common issues & fixes
+
+### Part V: Roadmap & Reference
+16. [Implementation Phases](#implementation-phases) — Step-by-step plan
+17. [Summary](#summary) — Key decisions & trade-offs
+18. [Appendices](#appendix-a-alternative-architectures) — Quick reference
 
 ---
 
-## Single-Node Reliability Improvements
+# Part I: Context & Analysis
 
-Before scaling horizontally, maximize the reliability of your single-node setup. These improvements provide **significant resilience gains with minimal complexity**.
+## Executive Summary
 
-### Quick Wins Summary
+### The Challenge
 
-| Improvement | Benefit | Effort |
-|-------------|---------|--------|
-| Persistent queues | No data loss on restart | Low |
-| Resource limits | Prevent OOM crashes | Low |
-| Health checks + auto-restart | Self-healing | Low |
-| Backup automation | Disaster recovery | Low |
-| Retry policies | Handle transient failures | Medium |
-| Self-monitoring + alerts | Proactive issue detection | Medium |
-| Graceful shutdown | Zero data loss on deploy | Medium |
+Modern distributed systems generate massive volumes of telemetry data—traces, metrics, and logs—that are essential for maintaining reliability and debugging issues. Commercial observability solutions (Datadog, New Relic, Splunk) provide excellent capabilities but at significant cost: **$2,000-$200,000+ per month** depending on scale.
+
+### Our Solution
+
+This architecture document describes a **self-hosted observability platform** built entirely on open-source components, centered around **OpenTelemetry** as the unified telemetry standard. The platform provides:
+
+- **Unified telemetry collection** via OpenTelemetry Collector
+- **Distributed tracing** via Jaeger/Tempo
+- **Metrics storage & querying** via Prometheus/Mimir/VictoriaMetrics
+- **Log aggregation** via Loki
+- **Visualization & alerting** via Grafana
+
+### Key Benefits
+
+| Benefit | Impact |
+|---------|--------|
+| **Cost Savings** | 60-90% reduction vs. commercial solutions |
+| **Data Ownership** | Full control over sensitive telemetry data |
+| **Flexibility** | Customize retention, sampling, and processing |
+| **No Vendor Lock-in** | OpenTelemetry is vendor-neutral |
+| **Scalability** | From single-node to enterprise scale |
+
+### Recommendation
+
+We recommend a **phased approach**:
+
+1. **Phase 1 (Complete):** Single-node deployment with reliability improvements
+2. **Phase 2:** Add message queuing for resilience
+3. **Phase 3:** Kubernetes deployment for horizontal scaling
+4. **Phase 4:** Multi-region for high availability
+
+---
+
+## Current State Analysis
+
+### What We Have Today
+
+The current implementation is a **single-node Docker Compose deployment** running on a single server. All observability components run as containers on one host.
+
+```mermaid
+flowchart TB
+    subgraph Current["📊 Current Single-Node Architecture"]
+        subgraph Apps["Applications"]
+            A1[App 1] & A2[App 2] & A3[App N]
+        end
+        
+        subgraph Node["Single Host"]
+            OC[OTel Collector<br/>with Persistent Queue]
+            
+            subgraph Backends["Storage Backends"]
+                J[("Jaeger<br/>Badger DB")]
+                P[("Prometheus<br/>TSDB")]
+                L[("Loki<br/>Filesystem")]
+            end
+            
+            G[Grafana]
+        end
+        
+        Apps -->|OTLP| OC
+        OC --> J & P & L
+        J & P & L --> G
+    end
+    
+    style Node fill:#e3f2fd,stroke:#1976d2
+    style OC fill:#ff9800,stroke:#e65100
+```
+
+### Current Capabilities
+
+| Capability | Status | Details |
+|------------|--------|---------|
+| Trace Collection | ✅ Operational | Via OTel Collector → Jaeger |
+| Metrics Collection | ✅ Operational | Via OTel Collector → Prometheus |
+| Log Aggregation | ✅ Operational | Via OTel Collector → Loki |
+| Dashboards | ✅ Operational | Grafana with auto-provisioned dashboards |
+| Alerting | ✅ Operational | 31 alert rules configured |
+| Data Persistence | ✅ Operational | Docker volumes with Badger/TSDB |
+| Backup/Restore | ✅ Operational | Automated scripts |
+
+### Current Performance Limits
+
+| Metric | Current Capacity | Typical Usage |
+|--------|------------------|---------------|
+| Traces | Up to 50K spans/sec | 5-10K spans/sec |
+| Metrics | Up to 1M active series | 100-300K series |
+| Logs | Up to 50K lines/sec | 5-10K lines/sec |
+| Retention | 30 days (configurable) | 30 days |
+| Storage | ~50 GB/day at moderate load | ~20 GB/day |
+
+### Strengths of Current Architecture
+
+| Strength | Description |
+|----------|-------------|
+| **Simplicity** | Single `docker compose up` deploys everything |
+| **Low Cost** | Runs on a single $50-150/month VPS |
+| **Easy Maintenance** | One node to monitor and update |
+| **Quick Recovery** | Simple backup/restore process |
+| **Full Featured** | All three pillars of observability |
+| **Production Ready** | Persistent queues, health checks, auto-restart |
+
+### Weaknesses & Limitations
+
+| Weakness | Impact | Risk Level |
+|----------|--------|------------|
+| **Single Point of Failure** | Node failure = complete outage | 🔴 High |
+| **Vertical Scaling Only** | Limited by single-node resources | 🟡 Medium |
+| **No Geographic Redundancy** | Cannot survive datacenter failure | 🟡 Medium |
+| **Shared Resources** | Components compete for CPU/memory | 🟡 Medium |
+| **Limited Throughput** | Caps at ~50K events/sec | 🟢 Low (for most) |
+| **Manual Scaling** | Cannot auto-scale with load | 🟢 Low |
+
+---
+
+## Problem Statement
+
+### When Single-Node Is Not Enough
+
+The current single-node architecture serves well for small-to-medium deployments. However, organizations face scaling challenges in the following scenarios:
+
+```mermaid
+flowchart LR
+    subgraph Triggers["⚠️ Scaling Triggers"]
+        T1["📈 Volume<br/>> 50K events/sec"]
+        T2["⏱️ Availability<br/>99.9%+ SLA required"]
+        T3["🌍 Geography<br/>Multi-region apps"]
+        T4["🔒 Compliance<br/>Data residency rules"]
+        T5["👥 Growth<br/>> 50 applications"]
+    end
+    
+    T1 & T2 & T3 & T4 & T5 --> Decision{Scale?}
+    
+    Decision -->|Yes| Scale[Implement<br/>Scalable Architecture]
+    Decision -->|No| Optimize[Optimize<br/>Single-Node]
+    
+    style Triggers fill:#fff3e0,stroke:#ff9800
+    style Scale fill:#c8e6c9,stroke:#4caf50
+    style Optimize fill:#e3f2fd,stroke:#2196f3
+```
+
+### Specific Problems to Solve
+
+#### 1. Availability Risk
+
+**Problem:** Single-node failure causes complete observability blackout.
+
+**Impact:**
+- Cannot debug production issues during outage
+- No historical data during recovery
+- Potential data loss if failure is catastrophic
+
+**Current Mitigation:** Persistent queues buffer data, auto-restart recovers from crashes.
+
+**Gap:** No protection against hardware failure, OS crashes, or datacenter issues.
+
+#### 2. Throughput Ceiling
+
+**Problem:** Single node cannot process beyond ~50K events/second.
+
+**Impact:**
+- Data dropping during traffic spikes
+- Increased latency in data availability
+- Incomplete traces and metrics gaps
+
+**Current Mitigation:** Sampling reduces volume at the cost of data loss.
+
+**Gap:** Cannot handle sustained high throughput without aggressive sampling.
+
+#### 3. Resource Contention
+
+**Problem:** All components share CPU, memory, and disk I/O.
+
+**Impact:**
+- Prometheus high memory usage affects Jaeger query performance
+- Loki ingestion spikes slow down Grafana dashboards
+- Unpredictable performance characteristics
+
+**Current Mitigation:** Resource limits prevent complete system failure.
+
+**Gap:** Cannot guarantee performance SLAs for any component.
+
+#### 4. Operational Limitations
+
+**Problem:** Upgrades, maintenance, and backups require downtime.
+
+**Impact:**
+- Data gaps during maintenance windows
+- Risk during version upgrades
+- Cannot perform rolling updates
+
+**Current Mitigation:** Graceful shutdown preserves in-flight data.
+
+**Gap:** No way to upgrade without brief interruption.
+
+### Decision Framework
+
+Use this decision tree to determine if you need to scale:
+
+```mermaid
+flowchart TD
+    Start["Evaluate Scaling Need"] --> Q1{"Events > 50K/sec<br/>sustained?"}
+    
+    Q1 -->|Yes| Scale["✅ Scale: Multi-Node"]
+    Q1 -->|No| Q2{"99.9%+ uptime<br/>required?"}
+    
+    Q2 -->|Yes| Scale
+    Q2 -->|No| Q3{"Multi-region<br/>deployment?"}
+    
+    Q3 -->|Yes| Scale
+    Q3 -->|No| Q4{"Compliance requires<br/>data separation?"}
+    
+    Q4 -->|Yes| Scale
+    Q4 -->|No| Q5{"Frequent<br/>performance issues?"}
+    
+    Q5 -->|Yes| Optimize["⚡ Optimize Single-Node<br/>(See Section 8)"]
+    Q5 -->|No| Stay["✅ Stay Single-Node<br/>Current setup is sufficient"]
+    
+    style Scale fill:#c8e6c9,stroke:#4caf50
+    style Optimize fill:#fff3e0,stroke:#ff9800
+    style Stay fill:#e3f2fd,stroke:#2196f3
+```
+
+---
+
+## Solution Overview
+
+### Architectural Principles
+
+The scalable architecture is designed around these core principles:
+
+| Principle | Description |
+|-----------|-------------|
+| **Loose Coupling** | Components can be upgraded, scaled, and restarted independently |
+| **Horizontal Scalability** | Add nodes to increase capacity, not bigger machines |
+| **Graceful Degradation** | Partial failures don't cause complete outages |
+| **Data Durability** | No data loss during failures, upgrades, or scaling |
+| **Operational Simplicity** | Prefer simpler solutions over complex optimizations |
+| **Cost Efficiency** | Use resources efficiently, scale only when needed |
+
+### Evolution Path
+
+The architecture evolves through stages, allowing incremental investment:
+
+```mermaid
+flowchart LR
+    subgraph Stage1["Stage 1: Foundation"]
+        S1[Single-Node<br/>with Reliability]
+    end
+    
+    subgraph Stage2["Stage 2: Resilience"]
+        S2[Add Kafka<br/>Message Queue]
+    end
+    
+    subgraph Stage3["Stage 3: Scale"]
+        S3[Kubernetes<br/>Horizontal Scaling]
+    end
+    
+    subgraph Stage4["Stage 4: Enterprise"]
+        S4[Multi-Region<br/>High Availability]
+    end
+    
+    S1 -->|"50K events/sec<br/>or HA needed"| S2
+    S2 -->|"100K+ events/sec<br/>or K8s adoption"| S3
+    S3 -->|"Multi-DC<br/>or compliance"| S4
+    
+    style Stage1 fill:#c8e6c9,stroke:#4caf50
+    style Stage2 fill:#fff3e0,stroke:#ff9800
+    style Stage3 fill:#e3f2fd,stroke:#2196f3
+    style Stage4 fill:#f3e5f5,stroke:#9c27b0
+```
+
+### Target Architecture Preview
+
+The fully scaled architecture separates concerns into distinct layers:
+
+```mermaid
+flowchart TB
+    subgraph Target["🎯 Target Scalable Architecture"]
+        subgraph Ingestion["⚡ Ingestion Layer"]
+            LB[Load Balancer]
+            OC1[Collector 1] & OC2[Collector 2] & OC3[Collector N]
+            LB --> OC1 & OC2 & OC3
+        end
+        
+        subgraph Queue["📨 Buffering Layer"]
+            K[("Kafka / Redis<br/>Durable Queue")]
+        end
+        
+        subgraph Processing["⚙️ Processing Layer"]
+            P1[Processor Pool]
+        end
+        
+        subgraph Storage["💾 Storage Layer"]
+            T[("Tempo")] & M[("Mimir")] & L[("Loki")]
+            S3[("Object Storage")]
+            T & M & L --> S3
+        end
+        
+        subgraph Viz["📈 Visualization"]
+            G[Grafana HA]
+        end
+    end
+    
+    Apps[Applications] --> LB
+    OC1 & OC2 & OC3 --> K
+    K --> P1 --> T & M & L
+    T & M & L --> G
+    
+    style Ingestion fill:#e8f5e9,stroke:#4caf50
+    style Queue fill:#fff3e0,stroke:#ff9800
+    style Storage fill:#e3f2fd,stroke:#2196f3
+    style Viz fill:#fce4ec,stroke:#e91e63
+```
+
+### Key Architectural Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Telemetry Standard** | OpenTelemetry | Vendor-neutral, industry standard, broad SDK support |
+| **Message Queue** | Kafka (large) / Redis (small) | Durability, replay capability, back-pressure handling |
+| **Trace Storage** | Tempo (scale) / Jaeger (simple) | Native object storage, cost-effective at scale |
+| **Metrics Storage** | Mimir / VictoriaMetrics | Prometheus-compatible, horizontally scalable |
+| **Log Storage** | Loki | Low-cost, integrates well with Grafana |
+| **Object Storage** | S3 / MinIO | Durable, cheap, scalable long-term storage |
+
+---
+
+# Part II: Architecture
+
+## Target Architecture
+
+This section details the fully scalable architecture for production deployments handling 50K+ events/second with high availability requirements.
+
+### Architectural Layers
+
+The scalable architecture consists of five distinct layers, each independently scalable:
+
+```mermaid
+flowchart TB
+    subgraph Layer1["Layer 1: Ingestion"]
+        direction LR
+        LB["🔄 Load Balancer<br/>HAProxy / NGINX / Cloud LB"]
+        G1["Gateway 1"] & G2["Gateway 2"] & G3["Gateway N"]
+        LB --> G1 & G2 & G3
+    end
+    
+    subgraph Layer2["Layer 2: Buffering"]
+        K[("📨 Message Queue<br/>Kafka / Redis Streams")]
+    end
+    
+    subgraph Layer3["Layer 3: Processing"]
+        direction LR
+        TP["Trace<br/>Processors"] & MP["Metric<br/>Processors"] & LP["Log<br/>Processors"]
+    end
+    
+    subgraph Layer4["Layer 4: Storage"]
+        direction LR
+        Tempo[("🔍 Tempo<br/>Traces")]
+        Mimir[("📊 Mimir<br/>Metrics")]
+        Loki[("📝 Loki<br/>Logs")]
+        S3[("☁️ Object Storage<br/>S3 / MinIO / GCS")]
+    end
+    
+    subgraph Layer5["Layer 5: Visualization"]
+        Grafana["📈 Grafana HA"]
+        DB[("PostgreSQL<br/>Shared State")]
+    end
+    
+    Apps["📱 Applications"] --> Layer1
+    G1 & G2 & G3 --> K
+    K --> TP & MP & LP
+    TP --> Tempo
+    MP --> Mimir
+    LP --> Loki
+    Tempo & Mimir & Loki --> S3
+    Tempo & Mimir & Loki --> Grafana
+    Grafana --> DB
+    
+    style Layer1 fill:#e8f5e9,stroke:#4caf50
+    style Layer2 fill:#fff3e0,stroke:#ff9800
+    style Layer3 fill:#e3f2fd,stroke:#2196f3
+    style Layer4 fill:#fce4ec,stroke:#e91e63
+    style Layer5 fill:#f3e5f5,stroke:#9c27b0
+```
+
+### Layer Descriptions
+
+| Layer | Purpose | Scaling Strategy | Key Technologies |
+|-------|---------|------------------|------------------|
+| **Ingestion** | Receive telemetry from applications | Horizontal (add gateways) | OTel Collector, HAProxy |
+| **Buffering** | Decouple ingestion from processing | Partition-based | Kafka, Redis Streams |
+| **Processing** | Transform, sample, enrich data | Horizontal (add consumers) | OTel Collector |
+| **Storage** | Persist and query telemetry | Horizontal + Object storage | Tempo, Mimir, Loki |
+| **Visualization** | Dashboards, alerts, exploration | Horizontal (stateless) | Grafana |
+
+### Why This Architecture?
+
+| Design Choice | Problem Solved |
+|---------------|----------------|
+| **Load Balancer** | Distributes load, enables zero-downtime deployments |
+| **Gateway Pool** | No single point of failure for ingestion |
+| **Message Queue** | Absorbs spikes, enables replay, decouples components |
+| **Separate Processors** | Independent scaling per telemetry type |
+| **Object Storage** | Cost-effective long-term retention |
+| **Stateless Grafana** | Scale visualization independently |
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant LB as Load Balancer
+    participant GW as Gateway Collector
+    participant MQ as Kafka
+    participant Proc as Processor
+    participant Store as Storage Backend
+    participant S3 as Object Storage
+    participant Graf as Grafana
+    
+    App->>LB: OTLP (traces, metrics, logs)
+    LB->>GW: Route to healthy gateway
+    GW->>GW: Validate, batch
+    GW->>MQ: Publish to topic
+    MQ->>Proc: Consume batch
+    Proc->>Proc: Sample, transform, enrich
+    Proc->>Store: Write to backend
+    Store->>S3: Flush blocks to object storage
+    Graf->>Store: Query data
+    Store->>S3: Fetch historical data
+    Store->>Graf: Return results
+```
+
+---
+
+# Part III: Implementation
+
+## Single-Node Optimization
+
+Before scaling horizontally, maximize the reliability of your single-node setup. These improvements are **already implemented** in the current deployment and provide significant resilience gains with minimal complexity.
+
+### Implemented Improvements Summary
+
+| Improvement | Status | Benefit |
+|-------------|--------|---------|
+| ✅ Persistent queues | Implemented | No data loss on restart |
+| ✅ Resource limits | Implemented | Prevents OOM crashes |
+| ✅ Health checks + auto-restart | Implemented | Self-healing |
+| ✅ Backup automation | Implemented | Disaster recovery |
+| ✅ Retry policies | Implemented | Handles transient failures |
+| ✅ Self-monitoring + alerts | Implemented | Proactive issue detection |
+| ✅ Graceful shutdown | Implemented | Zero data loss on deploy |
 
 ---
 
@@ -58,11 +534,10 @@ Before scaling horizontally, maximize the reliability of your single-node setup.
 
 **Problem**: If OTel Collector restarts, in-flight data in memory queues is lost.
 
-**Solution**: Use the `file_storage` extension to persist queues to disk.
+**Solution**: The `file_storage` extension persists queues to disk.
 
 ```yaml
-# otel-collector-config.yaml - Enhanced with persistent queues
-
+# otel-collector-config.yaml
 extensions:
   file_storage:
     directory: /var/lib/otelcol/storage
@@ -70,129 +545,40 @@ extensions:
     compaction:
       on_start: true
       on_rebound: true
-      directory: /var/lib/otelcol/storage
 
 exporters:
   otlp/jaeger:
-    endpoint: jaeger:4317
     sending_queue:
-      enabled: true
-      num_consumers: 10
-      queue_size: 10000
       storage: file_storage    # ← Persist to disk
-    retry_on_failure:
-      enabled: true
-      initial_interval: 5s
-      max_interval: 30s
-      max_elapsed_time: 300s
-
-  loki:
-    endpoint: http://loki:3100/loki/api/v1/push
-    sending_queue:
-      enabled: true
-      num_consumers: 10
-      queue_size: 10000
-      storage: file_storage    # ← Persist to disk
-    retry_on_failure:
-      enabled: true
-      initial_interval: 5s
-      max_interval: 30s
-
-service:
-  extensions: [health_check, file_storage]
-  # ... pipelines
-```
-
-**Docker Compose change**:
-```yaml
-otel-collector:
-  volumes:
-    - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
-    - otel-collector-data:/var/lib/otelcol  # ← Add persistent volume
-
-volumes:
-  otel-collector-data:
-    driver: local
 ```
 
 **Result**: Data survives collector restarts. Queue replays on startup.
 
 ---
 
-### 2. Resource Limits (Prevent OOM & Noisy Neighbors)
+### 2. Resource Limits (Prevent OOM)
 
-**Problem**: Unbounded memory usage can crash containers or affect other services.
+**Problem**: Unbounded memory usage can crash containers.
 
-**Solution**: Set explicit resource limits in Docker Compose.
+**Solution**: Explicit resource limits in Docker Compose.
 
 ```yaml
-# docker-compose.yml - With resource limits
-
+# docker-compose.yml
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.91.0
     deploy:
       resources:
         limits:
           cpus: '2'
           memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-    # ... rest of config
-
-  prometheus:
-    image: prom/prometheus:v2.48.0
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
-
-  loki:
-    image: grafana/loki:2.9.0
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 2G
-        reservations:
-          cpus: '0.25'
-          memory: 512M
-
-  jaeger:
-    image: jaegertracing/all-in-one:1.51
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
-
-  grafana:
-    image: grafana/grafana:10.2.0
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
 ```
 
-**OTel Collector memory limiter** (already in config, verify values):
+**OTel Collector memory limiter**:
 ```yaml
 processors:
   memory_limiter:
-    check_interval: 1s
-    limit_mib: 1600        # 80% of container limit (2G)
-    spike_limit_mib: 400   # Allow temporary spikes
+    limit_mib: 1600        # 80% of container limit
+    spike_limit_mib: 400
 ```
 
 ---
@@ -204,51 +590,12 @@ processors:
 **Solution**: Comprehensive health checks with automatic restart.
 
 ```yaml
-# docker-compose.yml - Enhanced health checks
-
 services:
   otel-collector:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
       interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  prometheus:
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  loki:
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  jaeger:
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  grafana:
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
-      interval: 10s
-      timeout: 5s
       retries: 5
       start_period: 30s
     depends_on:
@@ -796,81 +1143,9 @@ With these improvements, a single-node setup can reliably handle:
 
 ---
 
-## Executive Summary
+## Scaling Strategies
 
-This document proposes an evolution of the OpenTelemetry Observability Stack from a single-node setup to a horizontally scalable, highly available architecture suitable for production workloads of any size.
-
-### Goals
-1. **Single-Node Reliability** - Maximize resilience before scaling
-2. **Horizontal Scalability** - Handle millions of spans/metrics/logs per second
-3. **High Availability** - No single point of failure
-4. **Fault Tolerance** - Graceful degradation, no data loss
-5. **Multi-Platform** - Docker, Kubernetes, and bare-metal/VPS deployments
-6. **Ease of Use** - Simple to deploy and operate
-
----
-
-## Current Architecture (Single Node)
-
-```mermaid
-flowchart TB
-    subgraph Apps["📱 Applications"]
-        A1[App 1]
-        A2[App 2]
-        A3[App N]
-    end
-
-    subgraph Collector["⚡ OTel Collector"]
-        OC[OpenTelemetry Collector<br/>with Persistent Queue]
-    end
-
-    subgraph Storage["💾 Storage Backends"]
-        J[("🔍 Jaeger<br/>(Badger)")]
-        P[("📊 Prometheus<br/>(TSDB)")]
-        L[("📝 Loki<br/>(TSDB)")]
-    end
-
-    subgraph Viz["📈 Visualization"]
-        G[Grafana]
-    end
-
-    Apps -->|OTLP gRPC/HTTP| Collector
-    OC -->|Traces| J
-    OC -->|Metrics| P
-    OC -->|Logs| L
-    J & P & L --> G
-
-    style Collector fill:#ff9800,stroke:#e65100,color:#000
-    style J fill:#00bcd4,stroke:#006064,color:#000
-    style P fill:#e91e63,stroke:#880e4f,color:#fff
-    style L fill:#9c27b0,stroke:#4a148c,color:#fff
-    style G fill:#ff5722,stroke:#bf360c,color:#fff
-```
-
-> ⚠️ **Note**: Single OTel Collector is a potential single point of failure. See [Scalable Architecture](#proposed-scalable-architecture) for HA setup.
-
-### Current Single-Node Capabilities
-
-With the reliability improvements implemented, the single-node setup now handles:
-
-| Metric | Capacity |
-|--------|----------|
-| Spans/second | Up to 50K |
-| Active metric series | Up to 1M |
-| Log lines/second | Up to 50K |
-| Data durability | Persistent (survives restarts) |
-
-### Limitations (When to Scale Beyond Single-Node)
-- Sustained > 50K events/sec
-- Need for high availability (zero downtime requirement)
-- Multiple data centers or geographic distribution
-- Compliance requirements (data separation)
-
----
-
-## Proposed Scalable Architecture
-
-### High-Level Design
+### Scalable Architecture Overview
 
 ```mermaid
 flowchart TB
