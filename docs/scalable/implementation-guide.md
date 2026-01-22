@@ -4,6 +4,46 @@
 
 ---
 
+## Table of Contents
+
+- [Before We Begin](#before-we-begin)
+- [What We're Building](#what-were-building)
+- [Prerequisites](#prerequisites)
+- [Understanding the Phases](#understanding-the-phases)
+
+### Phase 1: Single-Node Deployment
+- [What You'll Build](#what-youll-build)
+- [Step 1: Set Up Your Project](#step-1-set-up-your-project)
+- [Step 2: Configure the OpenTelemetry Collector](#step-2-configure-the-opentelemetry-collector)
+- [Step 3: Configure Prometheus](#step-3-configure-prometheus)
+- [Step 4: Configure Loki](#step-4-configure-loki)
+- [Step 5: Configure Grafana Data Sources](#step-5-configure-grafana-data-sources)
+- [Step 6: Create the Docker Compose File](#step-6-create-the-docker-compose-file)
+- [Step 7: Create Operational Scripts](#step-7-create-operational-scripts)
+- [Step 8: Deploy](#step-8-deploy)
+- [Step 9: Verify Everything Works](#step-9-verify-everything-works)
+- [Step 10: Connect Your Applications](#step-10-connect-your-applications)
+- [Phase 1 Complete](#phase-1-complete)
+
+### Phase 2: Adding Kafka for Reliability
+- [Phase 2: Adding Kafka for Reliability](#phase-2-adding-kafka-for-reliability)
+
+### Troubleshooting
+- [The Debugging Mindset](#the-debugging-mindset)
+- [Quick Diagnostic Commands](#quick-diagnostic-commands)
+- [Common Issues](#common-issues)
+  - [OTel Collector keeps restarting](#otel-collector-keeps-restarting)
+  - [Data not appearing in Grafana](#data-not-appearing-in-grafana)
+  - [Jaeger queries are slow](#jaeger-queries-are-slow)
+  - [Loki rate limit exceeded](#loki-rate-limit-exceeded)
+  - [Can't connect to backends](#cant-connect-to-backends)
+- [Getting Help](#getting-help)
+
+### Next Steps
+- [What's Next](#whats-next)
+
+---
+
 ## Before We Begin
 
 This guide will walk you through deploying a complete observability stack—from a simple single-server setup to a scalable, highly-available platform. But before we dive into commands and configuration files, let me set some expectations.

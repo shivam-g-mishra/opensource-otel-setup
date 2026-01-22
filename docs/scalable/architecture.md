@@ -4,6 +4,72 @@
 
 ---
 
+## Table of Contents
+
+- [The Story Behind This Document](#the-story-behind-this-document)
+- [Who This Document Is For](#who-this-document-is-for)
+- [Document Structure](#document-structure)
+
+### Part I: The Foundation
+- [Why Observability Actually Matters](#why-observability-actually-matters)
+  - [The Three Pillars: A Practical Explanation](#the-three-pillars-a-practical-explanation)
+  - [The Real Power: Correlation](#the-real-power-correlation)
+- [Why OpenTelemetry is the Right Foundation](#why-opentelemetry-is-the-right-foundation)
+  - [What OpenTelemetry Actually Is](#what-opentelemetry-actually-is)
+  - [Why This Matters for Your Team](#why-this-matters-for-your-team)
+  - [The OpenTelemetry Collector: Your Swiss Army Knife](#the-opentelemetry-collector-your-swiss-army-knife)
+
+### Part II: Starting Point and Limitations
+- [The Single-Node Architecture](#the-single-node-architecture)
+  - [What You Get](#what-you-get)
+  - [What's Already Production-Ready](#whats-already-production-ready)
+  - [Being Honest About Limitations](#being-honest-about-limitations)
+  - [When Single-Node Is the Right Choice](#when-single-node-is-the-right-choice)
+  - [When You Need to Scale](#when-you-need-to-scale)
+
+### Part III: The Scalable Architecture
+- [The Design Philosophy](#the-design-philosophy)
+- [The Architecture at a Glance](#the-architecture-at-a-glance)
+- [The Five-Layer Architecture](#the-five-layer-architecture)
+  - [Layer 1: Ingestion — The Front Door](#layer-1-ingestion--the-front-door)
+  - [Layer 2: Buffering — The Shock Absorber](#layer-2-buffering--the-shock-absorber)
+  - [Layer 3: Processing — The Smart Filter](#layer-3-processing--the-smart-filter)
+  - [Layer 4: Storage — The Long-Term Memory](#layer-4-storage--the-long-term-memory)
+  - [Layer 5: Visualization — The Single Pane of Glass](#layer-5-visualization--the-single-pane-of-glass)
+- [How Data Actually Flows](#how-data-actually-flows)
+- [Sampling: The Economics of Observability](#sampling-the-economics-of-observability)
+  - [The Problem with Keeping Everything](#the-problem-with-keeping-everything)
+  - [Tail-Based Sampling Strategy](#tail-based-sampling-strategy)
+  - [Head vs. Tail Sampling](#head-vs-tail-sampling)
+- [Security Considerations](#security-considerations)
+- [Common Mistakes to Avoid](#common-mistakes-to-avoid)
+
+### Part IV: Making Decisions
+- [Technology Selection Rationale](#technology-selection-rationale)
+  - [OpenTelemetry Collector vs. Alternatives](#opentelemetry-collector-vs-alternatives)
+  - [Tempo vs. Jaeger: The Storage Question](#tempo-vs-jaeger-the-storage-question)
+  - [Mimir vs. Prometheus: The Scaling Question](#mimir-vs-prometheus-the-scaling-question)
+  - [Loki vs. Elasticsearch: The Indexing Trade-off](#loki-vs-elasticsearch-the-indexing-trade-off)
+  - [Kafka vs. Alternatives: The Durability Question](#kafka-vs-alternatives-the-durability-question)
+- [Cost Analysis: What Will This Actually Cost?](#cost-analysis-what-will-this-actually-cost)
+  - [Single-Node Deployment (Phase 1)](#single-node-deployment-phase-1)
+  - [Multi-Node Deployment (Phase 2)](#multi-node-deployment-phase-2)
+  - [Enterprise-Scale Deployment (5,000+ Hosts)](#enterprise-scale-deployment-5000-hosts)
+  - [Cost Comparison at Medium Scale](#cost-comparison-at-medium-scale)
+- [The Real Human Cost: What You're Signing Up For](#the-real-human-cost-what-youre-signing-up-for)
+  - [The Operational Reality](#the-operational-reality)
+  - [The Skills You Need On Your Team](#the-skills-you-need-on-your-team)
+  - [The Incidents You'll Face](#the-incidents-youll-face)
+  - [Total Cost of Ownership: The Full Picture](#total-cost-of-ownership-the-full-picture)
+  - [When Commercial Solutions Are the Right Choice](#when-commercial-solutions-are-the-right-choice)
+  - [When Self-Hosted Is the Right Choice](#when-self-hosted-is-the-right-choice)
+- [The Trade-Offs We Accept](#the-trade-offs-we-accept)
+- [Evolution Path: Start Simple, Scale When Needed](#evolution-path-start-simple-scale-when-needed)
+- [Final Thoughts](#final-thoughts)
+- [Quick Reference](#quick-reference)
+
+---
+
 ## The Story Behind This Document
 
 If you're reading this, chances are you've been in one of these situations:
