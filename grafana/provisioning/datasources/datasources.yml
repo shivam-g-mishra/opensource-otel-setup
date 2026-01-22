@@ -7,6 +7,7 @@
 # Available datasources:
 #   - Prometheus: For metrics queries
 #   - Jaeger: For trace exploration
+#   - Loki: For log queries
 #
 # =============================================================================
 

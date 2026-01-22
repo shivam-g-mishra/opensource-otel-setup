@@ -10,7 +10,10 @@
 #   make status   - Check service health
 # =============================================================================
 
-.PHONY: help up down stop start restart status logs clean ps shell backup restore deploy
+.PHONY: help up up-seq up-full down stop start restart status logs clean ps backup restore deploy
+.PHONY: deploy-quick deploy-pull restore-latest validate pull update alerts metrics
+.PHONY: logs-collector logs-jaeger logs-loki logs-prometheus shell-collector shell-prometheus
+.PHONY: _health-check
 
 # Default target
 .DEFAULT_GOAL := help
