@@ -232,6 +232,8 @@ services:
 
   # ===========================================
   # Node Exporter - Host Metrics
+  # NOTE: On macOS, this provides container VM metrics, not host metrics.
+  #       For true host metrics on macOS, run node_exporter natively.
   # ===========================================
   node-exporter:
     image: prom/node-exporter:v1.7.0
@@ -241,6 +243,7 @@ services:
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--no-collector.systemd'
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -250,6 +253,7 @@ services:
     networks:
       - observability
     restart: unless-stopped
+    stop_grace_period: 10s
     deploy:
       resources:
         limits:

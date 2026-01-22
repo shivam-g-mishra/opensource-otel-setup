@@ -124,15 +124,6 @@ groups:
           summary: "Prometheus storage filling up"
           description: "Prometheus storage is {{ $value | printf \"%.1f\" }}GB."
 
-      - alert: PrometheusTargetsMissing
-        expr: up == 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Prometheus target down"
-          description: "Target {{ $labels.job }} ({{ $labels.instance }}) is down."
-
       - alert: PrometheusConfigReloadFailed
         expr: prometheus_config_last_reload_successful == 0
         for: 5m
@@ -156,23 +147,23 @@ groups:
           summary: "Loki is down"
           description: "Loki has been down for more than 1 minute."
 
-      - alert: LokiIngestionErrors
-        expr: rate(loki_distributor_ingester_append_failures_total[5m]) > 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Loki ingestion failures"
-          description: "Loki is experiencing ingestion failures."
-
       - alert: LokiRequestErrors
-        expr: rate(loki_request_duration_seconds_count{status_code=~"5.."}[5m]) > 0
+        expr: sum(rate(loki_request_duration_seconds_count{status_code=~"5.."}[5m])) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Loki request errors"
           description: "Loki is returning 5xx errors."
+
+      - alert: LokiHighLatency
+        expr: histogram_quantile(0.99, sum(rate(loki_request_duration_seconds_bucket[5m])) by (le, route)) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki high latency"
+          description: "Loki p99 latency is above 10 seconds for {{ $labels.route }}."
 
   # ===========================================================================
   # Jaeger Alerts
@@ -314,15 +305,6 @@ groups:
         annotations:
           summary: "High inode usage on {{ $labels.mountpoint }}"
           description: "Inode usage on {{ $labels.mountpoint }} is {{ $value | printf \"%.1f\" }}% (>85%)."
-
-      - alert: SystemdServiceFailed
-        expr: node_systemd_unit_state{state="failed"} == 1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Systemd service {{ $labels.name }} failed"
-          description: "Systemd service {{ $labels.name }} is in failed state."
 
       - alert: ClockSkew
         expr: abs(node_timex_offset_seconds) > 0.05

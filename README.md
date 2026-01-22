@@ -8,6 +8,7 @@ A production-ready, reliable observability infrastructure for any application. G
 - Docker Compose v2+ (for resource limits)
 - ~8GB RAM recommended for the full stack
 - ~20GB disk space for data retention
+- Linux recommended for full host metrics (see [macOS note](#macos-note))
 
 ## Quick Start
 
@@ -224,11 +225,16 @@ cp env.example .env
              │                 │                 │
              ▼                 ▼                 ▼
       ┌──────────┐      ┌──────────┐      ┌──────────┐
-      │  Jaeger  │      │Prometheus│      │   Loki   │
+      │  Jaeger  │      │Prometheus│◄─────│   Loki   │
       │ (traces) │      │(metrics) │      │  (logs)  │
       │ [Badger] │      │  [TSDB]  │      │  [TSDB]  │
       └────┬─────┘      └────┬─────┘      └────┬─────┘
-           └─────────────────┼─────────────────┘
+           │                 ▲                 │
+           │          ┌──────┴──────┐          │
+           │          │Node Exporter│          │
+           │          │(host metrics)│          │
+           │          └─────────────┘          │
+           └─────────────────┬─────────────────┘
                              ▼
                       ┌──────────┐
                       │ Grafana  │
@@ -296,6 +302,16 @@ opensource-otel-setup/
 - [ ] Enable TLS for external OTLP endpoints
 - [ ] Monitor disk usage (alerts pre-configured)
 - [ ] Test restore procedure (`make restore`)
+
+## macOS Note
+
+On macOS, Docker runs containers in a Linux VM. The Node Exporter will report metrics from this VM, not your Mac host. For true macOS host metrics:
+
+1. Install node_exporter via Homebrew: `brew install node_exporter`
+2. Run it natively: `node_exporter --web.listen-address=:9100`
+3. Update Prometheus to scrape `host.docker.internal:9100` instead of `node-exporter:9100`
+
+The infrastructure alerts (disk, memory, CPU) will still work but will monitor the Docker VM on macOS.
 
 ## Scaling Guide
 
