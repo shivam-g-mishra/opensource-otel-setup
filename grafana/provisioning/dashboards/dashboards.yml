@@ -1,0 +1,25 @@
+# =============================================================================
+# Grafana Dashboard Provisioning
+# =============================================================================
+# Dashboards in the specified folder are automatically loaded on startup.
+#
+# To add custom dashboards:
+#   1. Export your dashboard as JSON from Grafana
+#   2. Save it to ./grafana/provisioning/dashboards/
+#   3. Restart Grafana
+#
+# =============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: 'OpenTelemetry'
+    folderUid: 'otel'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

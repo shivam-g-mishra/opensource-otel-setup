@@ -1,0 +1,168 @@
+# OpenTelemetry Observability Stack
+# A reusable observability infrastructure for any application
+#
+# Services:
+#   - Jaeger: Distributed tracing
+#   - Prometheus: Metrics collection
+#   - Grafana: Dashboards & visualization
+#   - Seq: Structured logging (optional, great for .NET)
+#   - OTel Collector: Unified telemetry pipeline
+#
+# Usage:
+#   docker compose up -d
+#   docker compose --profile seq up -d  # Include Seq for .NET apps
+#
+# Ports:
+#   - 16686: Jaeger UI
+#   - 9090:  Prometheus UI
+#   - 3000:  Grafana UI (admin/admin)
+#   - 5380:  Seq UI (optional)
+#   - 4317:  OTLP gRPC (for your app)
+#   - 4318:  OTLP HTTP (for your app)
+
+services:
+  # ===========================================
+  # Jaeger - Distributed Tracing
+  # ===========================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: otel-jaeger
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"    # Jaeger UI
+      - "6831:6831/udp"                      # Jaeger agent (Thrift compact)
+      - "6832:6832/udp"                      # Jaeger agent (Thrift binary)
+      - "14268:14268"                        # Jaeger collector HTTP
+      - "14250:14250"                        # Jaeger collector gRPC
+      - "9411:9411"                          # Zipkin compatible endpoint
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Prometheus - Metrics Collection
+  # ===========================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: otel-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Grafana - Dashboards & Visualization
+  # ===========================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: otel-grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-clock-panel
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - observability
+    depends_on:
+      - prometheus
+      - jaeger
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Seq - Structured Logging (Optional)
+  # Great for .NET applications with Serilog
+  # ===========================================
+  seq:
+    image: datalust/seq:latest
+    container_name: otel-seq
+    profiles:
+      - seq
+      - full
+    ports:
+      - "${SEQ_API_PORT:-5341}:5341"    # Ingestion API
+      - "${SEQ_UI_PORT:-5380}:80"        # UI
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINPASSWORDHASH=${SEQ_ADMIN_PASSWORD_HASH:-}
+    volumes:
+      - seq-data:/data
+    networks:
+      - observability
+    restart: unless-stopped
+
+  # ===========================================
+  # OpenTelemetry Collector - Unified Pipeline
+  # ===========================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"   # OTLP gRPC receiver
+      - "${OTEL_HTTP_PORT:-4318}:4318"   # OTLP HTTP receiver
+      - "8888:8888"                       # Prometheus metrics (self)
+      - "8889:8889"                       # Prometheus exporter
+      - "13133:13133"                     # Health check
+      - "55679:55679"                     # ZPages (debug)
+    networks:
+      - observability
+    depends_on:
+      - jaeger
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  observability:
+    driver: bridge
+    name: observability
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  seq-data:
+    driver: local
