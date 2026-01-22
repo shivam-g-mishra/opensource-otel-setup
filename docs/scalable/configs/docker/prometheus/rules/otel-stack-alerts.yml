@@ -1,0 +1,237 @@
+# Prometheus Alerting Rules - Observability Stack
+#
+# Alerts for monitoring the monitoring infrastructure
+#
+
+groups:
+  # ===========================================================================
+  # OTel Collector Alerts
+  # ===========================================================================
+  - name: otel-collector
+    interval: 30s
+    rules:
+      - alert: OTelCollectorDown
+        expr: up{job=~"otel-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OTel Collector {{ $labels.instance }} is down"
+          description: "OTel Collector {{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: OTelCollectorHighMemory
+        expr: |
+          (process_resident_memory_bytes{job=~"otel-.*"} / 
+           otelcol_process_memory_limit) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector {{ $labels.instance }} high memory usage"
+          description: "OTel Collector {{ $labels.instance }} is using {{ $value | humanizePercentage }} of memory limit."
+
+      - alert: OTelCollectorExportFailures
+        expr: |
+          rate(otelcol_exporter_send_failed_spans_total[5m]) > 0
+          or rate(otelcol_exporter_send_failed_metric_points_total[5m]) > 0
+          or rate(otelcol_exporter_send_failed_log_records_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector {{ $labels.instance }} export failures"
+          description: "OTel Collector {{ $labels.instance }} is experiencing export failures."
+
+      - alert: OTelCollectorQueueBacklog
+        expr: otelcol_exporter_queue_size > 5000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector {{ $labels.instance }} queue backlog"
+          description: "OTel Collector {{ $labels.instance }} has {{ $value }} items in export queue."
+
+      - alert: OTelCollectorDroppedData
+        expr: |
+          rate(otelcol_processor_dropped_spans_total[5m]) > 0
+          or rate(otelcol_processor_dropped_metric_points_total[5m]) > 0
+          or rate(otelcol_processor_dropped_log_records_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector {{ $labels.instance }} dropping data"
+          description: "OTel Collector {{ $labels.instance }} is dropping telemetry data."
+
+  # ===========================================================================
+  # Kafka Alerts
+  # ===========================================================================
+  - name: kafka
+    interval: 30s
+    rules:
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka broker is down"
+          description: "Kafka broker has been down for more than 2 minutes."
+
+      - alert: KafkaConsumerLag
+        expr: kafka_consumergroup_lag_sum > 100000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag is high"
+          description: "Consumer group {{ $labels.consumergroup }} has lag of {{ $value }} messages."
+
+  # ===========================================================================
+  # Tempo Alerts
+  # ===========================================================================
+  - name: tempo
+    interval: 30s
+    rules:
+      - alert: TempoDown
+        expr: up{job="tempo"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tempo is down"
+          description: "Tempo has been down for more than 2 minutes."
+
+      - alert: TempoIngestionErrors
+        expr: rate(tempo_distributor_spans_received_total{status="error"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tempo ingestion errors"
+          description: "Tempo is experiencing span ingestion errors."
+
+      - alert: TempoCompactionFailing
+        expr: tempo_compactor_runs_failed_total > tempo_compactor_runs_completed_total
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tempo compaction failing"
+          description: "Tempo compaction is failing more than succeeding."
+
+  # ===========================================================================
+  # Mimir Alerts
+  # ===========================================================================
+  - name: mimir
+    interval: 30s
+    rules:
+      - alert: MimirDown
+        expr: up{job="mimir"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mimir is down"
+          description: "Mimir has been down for more than 2 minutes."
+
+      - alert: MimirIngestionRate
+        expr: |
+          sum(rate(cortex_distributor_received_samples_total[5m])) 
+          / ignoring(instance) group_left 
+          cortex_limits_overrides{limit_name="ingestion_rate"} > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mimir ingestion rate approaching limit"
+          description: "Mimir ingestion rate is at {{ $value | humanizePercentage }} of limit."
+
+      - alert: MimirHighSeriesCardinality
+        expr: |
+          sum(cortex_ingester_memory_series) 
+          / ignoring(instance) group_left 
+          cortex_limits_overrides{limit_name="max_global_series_per_user"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mimir series cardinality approaching limit"
+          description: "Mimir has {{ $value | humanizePercentage }} of max series limit."
+
+  # ===========================================================================
+  # Loki Alerts
+  # ===========================================================================
+  - name: loki
+    interval: 30s
+    rules:
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Loki is down"
+          description: "Loki has been down for more than 2 minutes."
+
+      - alert: LokiIngestionRateLimit
+        expr: |
+          sum(rate(loki_distributor_bytes_received_total[5m])) > 15000000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki ingestion rate high"
+          description: "Loki ingestion rate is {{ $value | humanize }} bytes/sec."
+
+      - alert: LokiRequestErrors
+        expr: |
+          sum(rate(loki_request_duration_seconds_count{status_code=~"5.."}[5m])) 
+          / sum(rate(loki_request_duration_seconds_count[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki error rate high"
+          description: "Loki error rate is {{ $value | humanizePercentage }}."
+
+  # ===========================================================================
+  # Grafana Alerts
+  # ===========================================================================
+  - name: grafana
+    interval: 30s
+    rules:
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Grafana is down"
+          description: "Grafana has been down for more than 2 minutes."
+
+  # ===========================================================================
+  # Disk Space Alerts
+  # ===========================================================================
+  - name: storage
+    interval: 60s
+    rules:
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space low on {{ $labels.instance }}"
+          description: "Disk space on {{ $labels.instance }} is {{ $value | humanizePercentage }} free."
+
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space critical on {{ $labels.instance }}"
+          description: "Disk space on {{ $labels.instance }} is {{ $value | humanizePercentage }} free."

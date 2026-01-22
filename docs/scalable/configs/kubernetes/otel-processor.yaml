@@ -1,0 +1,378 @@
+# Kubernetes - OTel Collector Processor Deployment
+#
+# Consumes telemetry from Kafka, applies processing, exports to storage backends
+# Stateless consumers that can scale horizontally via HPA
+#
+# Apply: kubectl apply -f otel-processor.yaml
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-processor-config
+  namespace: observability
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      
+      file_storage:
+        directory: /var/lib/otelcol/storage
+        timeout: 10s
+    
+    receivers:
+      kafka/traces:
+        brokers:
+          - otel-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+        topic: otlp-traces
+        protocol_version: "3.0.0"
+        encoding: otlp_proto
+        group_id: otel-trace-processors
+        initial_offset: latest
+        auto_commit:
+          enable: true
+          interval: 1s
+      
+      kafka/metrics:
+        brokers:
+          - otel-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+        topic: otlp-metrics
+        protocol_version: "3.0.0"
+        encoding: otlp_proto
+        group_id: otel-metric-processors
+        initial_offset: latest
+      
+      kafka/logs:
+        brokers:
+          - otel-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+        topic: otlp-logs
+        protocol_version: "3.0.0"
+        encoding: otlp_proto
+        group_id: otel-log-processors
+        initial_offset: latest
+    
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 10000
+        send_batch_max_size: 15000
+      
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 3200
+        spike_limit_mib: 800
+      
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 100000
+        expected_new_traces_per_sec: 10000
+        policies:
+          - name: errors-policy
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: latency-policy
+            type: latency
+            latency:
+              threshold_ms: 1000
+          - name: probabilistic-policy
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: 10
+      
+      k8sattributes:
+        auth_type: "serviceAccount"
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.container.name
+          labels:
+            - tag_name: app
+              key: app
+              from: pod
+            - tag_name: version
+              key: version
+              from: pod
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+      
+      resource:
+        attributes:
+          - key: collector.type
+            value: processor
+            action: upsert
+          - key: k8s.cluster.name
+            value: "${K8S_CLUSTER_NAME}"
+            action: upsert
+    
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.observability.svc.cluster.local:4317
+        tls:
+          insecure: true
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 10000
+          storage: file_storage
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+      
+      prometheusremotewrite/mimir:
+        endpoint: http://mimir.observability.svc.cluster.local:9009/api/v1/push
+        tls:
+          insecure: true
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 10000
+          storage: file_storage
+        retry_on_failure:
+          enabled: true
+      
+      loki:
+        endpoint: http://loki.observability.svc.cluster.local:3100/loki/api/v1/push
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 10000
+          storage: file_storage
+        retry_on_failure:
+          enabled: true
+    
+    service:
+      extensions: [health_check, file_storage]
+      
+      telemetry:
+        logs:
+          level: info
+        metrics:
+          address: 0.0.0.0:8888
+      
+      pipelines:
+        traces:
+          receivers: [kafka/traces]
+          processors: [memory_limiter, k8sattributes, tail_sampling, resource, batch]
+          exporters: [otlp/tempo]
+        
+        metrics:
+          receivers: [kafka/metrics]
+          processors: [memory_limiter, k8sattributes, resource, batch]
+          exporters: [prometheusremotewrite/mimir]
+        
+        logs:
+          receivers: [kafka/logs]
+          processors: [memory_limiter, k8sattributes, resource, batch]
+          exporters: [loki]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-processor
+  namespace: observability
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-processor
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "watch", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-processor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-processor
+subjects:
+  - kind: ServiceAccount
+    name: otel-processor
+    namespace: observability
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-processor
+  namespace: observability
+  labels:
+    app: otel-processor
+    component: processor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: otel-processor
+  template:
+    metadata:
+      labels:
+        app: otel-processor
+        component: processor
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8888"
+    spec:
+      serviceAccountName: otel-processor
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.91.0
+          args:
+            - "--config=/etc/otelcol/config.yaml"
+          env:
+            - name: GOMEMLIMIT
+              value: "3200MiB"
+            - name: K8S_CLUSTER_NAME
+              value: "production"
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          ports:
+            - name: metrics
+              containerPort: 8888
+              protocol: TCP
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+            - name: storage
+              mountPath: /var/lib/otelcol
+      volumes:
+        - name: config
+          configMap:
+            name: otel-processor-config
+        - name: storage
+          emptyDir:
+            sizeLimit: 2Gi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: otel-processor
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: otel-processor
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-processor
+  namespace: observability
+  labels:
+    app: otel-processor
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 8888
+      targetPort: 8888
+      protocol: TCP
+  selector:
+    app: otel-processor
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: otel-processor-hpa
+  namespace: observability
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: otel-processor
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: otel-processor-pdb
+  namespace: observability
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: otel-processor

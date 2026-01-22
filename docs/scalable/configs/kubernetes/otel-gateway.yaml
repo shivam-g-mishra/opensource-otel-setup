@@ -3,15 +3,8 @@
 # Receives telemetry from applications, forwards to Kafka
 # Stateless, horizontally scalable via HPA
 #
+# Prerequisites: kubectl apply -f namespace.yaml
 # Apply: kubectl apply -f otel-gateway.yaml
-
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: observability
-  labels:
-    name: observability
 
 ---
 apiVersion: v1

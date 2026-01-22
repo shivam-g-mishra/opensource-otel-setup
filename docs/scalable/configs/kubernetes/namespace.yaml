@@ -1,0 +1,16 @@
+# Kubernetes - Observability Namespace
+#
+# Creates the observability namespace with proper labels and annotations
+#
+# Apply first: kubectl apply -f namespace.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    name: observability
+    purpose: monitoring
+  annotations:
+    description: "OpenTelemetry observability stack - traces, metrics, logs"

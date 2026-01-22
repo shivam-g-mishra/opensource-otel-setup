@@ -1368,7 +1368,551 @@ At this point, you have a fully functional observability stack. Before moving to
 
 # Phase 2: Adding Kafka for Reliability
 
-*Coming when you need it. The key changes: split collectors into gateways (receive) and processors (export), add Kafka between them for durability, add HAProxy for load balancing. See [Architecture Overview](./architecture.md) for why this matters.*
+When you've outgrown Phase 1—either hitting throughput limits, needing high availability, or requiring backend maintenance without data loss—it's time to add Kafka as a buffer layer.
+
+## What Changes in Phase 2
+
+```
+Phase 1:                           Phase 2:
+                                   
+Apps → Collector → Backends        Apps → Gateways → Kafka → Processors → Backends
+       (single)                           (many)      ↓       (many)
+                                                   (buffer)
+```
+
+The key architectural changes:
+1. **Split collectors** into Gateways (receive only) and Processors (export only)
+2. **Add Kafka** between them for durable buffering
+3. **Add HAProxy** for load balancing across gateways
+4. **Replace Jaeger with Tempo** for scalable trace storage
+5. **Replace Prometheus with Mimir** for scalable metrics storage
+
+## Prerequisites
+
+- Phase 1 running successfully (or at least understood)
+- Server with 16+ GB RAM and 200+ GB SSD
+- Basic understanding of Kafka concepts
+
+## Step 1: Navigate to Scalable Configs
+
+All Phase 2 configuration files are in the `configs/docker/` directory:
+
+```bash
+cd docs/scalable/configs/docker
+ls -la
+```
+
+You should see:
+```
+docker-compose-scalable.yaml    # Main deployment file
+otel-gateway.yaml               # Gateway collector config
+otel-processor.yaml             # Processor collector config  
+haproxy.cfg                     # Load balancer config
+tempo.yaml                      # Trace storage config
+mimir.yaml                      # Metrics storage config
+loki.yaml                       # Log storage config
+prometheus.yml                  # Stack self-monitoring
+grafana/                        # Grafana provisioning
+```
+
+## Step 2: Understand the Components
+
+Before deploying, let's understand what each component does:
+
+### HAProxy (Load Balancer)
+```
+Incoming OTLP → HAProxy:4317 → Gateway 1, 2, 3...
+                      ↓
+              Health-aware routing
+              Round-robin distribution
+```
+
+HAProxy accepts all incoming telemetry and distributes it across healthy gateway collectors. If a gateway goes down, HAProxy automatically stops sending traffic to it.
+
+### Gateway Collectors
+```
+OTLP → Gateway → Kafka Topics
+                   ├── otlp-traces
+                   ├── otlp-metrics
+                   └── otlp-logs
+```
+
+Gateways are stateless and fast. They validate incoming data, batch it efficiently, and publish to Kafka. They don't process or sample—that comes later.
+
+### Kafka (Message Queue)
+```
+Gateways → Kafka (12 partitions each topic) → Processors
+              ↓
+         24h retention
+         Replication factor 1 (Docker)
+```
+
+Kafka provides durable buffering. Data is written to disk and survives component restarts. If processors are down, data queues in Kafka until they recover.
+
+### Processor Collectors
+```
+Kafka → Processor → Sampling → Tempo/Mimir/Loki
+                        ↓
+                  Keep errors
+                  Keep slow traces
+                  Sample 10% rest
+```
+
+Processors consume from Kafka and do the heavy lifting: tail-based sampling, attribute enrichment, and export to backends. They can scale independently based on load.
+
+### Storage Backends
+
+| Component | Replaces | Why |
+|-----------|----------|-----|
+| **Tempo** | Jaeger | Object storage native, cheaper at scale, TraceQL |
+| **Mimir** | Prometheus | Horizontally scalable, unlimited retention |
+| **Loki** | (same) | Already scalable by design |
+
+## Step 3: Deploy the Stack
+
+```bash
+# From the docker config directory
+cd docs/scalable/configs/docker
+
+# Start everything
+docker compose -f docker-compose-scalable.yaml up -d
+
+# Watch the logs
+docker compose -f docker-compose-scalable.yaml logs -f
+```
+
+Wait for all services to become healthy (2-3 minutes for Kafka to fully start):
+
+```bash
+docker compose -f docker-compose-scalable.yaml ps
+```
+
+Expected output:
+```
+NAME              STATUS                   PORTS
+grafana           Up (healthy)             0.0.0.0:3000->3000/tcp
+haproxy           Up (healthy)             0.0.0.0:4317-4318->4317-4318/tcp
+kafka             Up (healthy)             0.0.0.0:9092->9092/tcp
+loki              Up (healthy)             0.0.0.0:3100->3100/tcp
+mimir             Up (healthy)             0.0.0.0:9009->9009/tcp
+otel-gateway-1    Up (healthy)             4317-4318/tcp
+otel-gateway-2    Up (healthy)             4317-4318/tcp
+otel-processor-1  Up (healthy)             
+otel-processor-2  Up (healthy)             
+prometheus        Up (healthy)             0.0.0.0:9090->9090/tcp
+tempo             Up (healthy)             0.0.0.0:3200->3200/tcp
+```
+
+## Step 4: Scale the Collectors
+
+The real power of Phase 2 is horizontal scaling. Scale gateways and processors based on load:
+
+```bash
+# Scale to 3 gateways and 3 processors
+docker compose -f docker-compose-scalable.yaml up -d --scale otel-gateway=3 --scale otel-processor=3
+
+# Verify scaling
+docker compose -f docker-compose-scalable.yaml ps | grep otel
+```
+
+**When to scale gateways:** High CPU on existing gateways, HAProxy showing uneven distribution
+**When to scale processors:** Kafka consumer lag increasing, high memory usage on processors
+
+## Step 5: Verify Data Flow
+
+### Check HAProxy Stats
+Open http://localhost:8404/stats in your browser. You should see:
+- Backend servers (gateways) listed as UP
+- Request counts distributed across gateways
+
+### Check Kafka Topics
+```bash
+# List topics
+docker compose -f docker-compose-scalable.yaml exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+# Check topic offsets (messages in queue)
+docker compose -f docker-compose-scalable.yaml exec kafka kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --topic otlp-traces
+```
+
+### Check Collector Metrics
+```bash
+# Gateway metrics (receiving)
+curl -s http://localhost:8888/metrics | grep otelcol_receiver_accepted
+
+# Processor metrics (exporting) - need to find processor port
+docker compose -f docker-compose-scalable.yaml exec otel-processor-1 wget -qO- http://localhost:8888/metrics | grep otelcol_exporter_sent
+```
+
+### Send Test Data
+```bash
+# Same test as Phase 1 - HAProxy routes to gateways
+START_TIME=$(date +%s)000000000
+END_TIME=$(( $(date +%s) + 1 ))000000000
+
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"resourceSpans\": [{
+      \"resource\": {
+        \"attributes\": [{
+          \"key\": \"service.name\",
+          \"value\": {\"stringValue\": \"test-service-phase2\"}
+        }]
+      },
+      \"scopeSpans\": [{
+        \"spans\": [{
+          \"traceId\": \"5B8EFFF798038103D269B633813FC60D\",
+          \"spanId\": \"EEE19B7EC3C1B175\",
+          \"name\": \"test-span-phase2\",
+          \"kind\": 1,
+          \"startTimeUnixNano\": \"${START_TIME}\",
+          \"endTimeUnixNano\": \"${END_TIME}\"
+        }]
+      }]
+    }]
+  }"
+```
+
+### Verify in Grafana
+
+1. Open http://localhost:3000 (admin/admin)
+2. Go to Explore
+3. Select **Tempo** datasource
+4. Search for service "test-service-phase2"
+5. You should see your test trace
+
+## Step 6: Update Application Configuration
+
+Your applications now send to HAProxy instead of directly to a collector:
+
+```bash
+# Same endpoint - HAProxy handles routing
+OTEL_EXPORTER_OTLP_ENDPOINT=http://your-server:4317
+```
+
+No application code changes needed—just update the endpoint if it was pointing to a specific collector.
+
+## Step 7: Monitor the Stack
+
+Prometheus scrapes all components. Check the pre-configured alerts:
+
+```bash
+# View active alerts
+curl http://localhost:9090/api/v1/alerts | jq
+
+# View specific metrics
+curl 'http://localhost:9090/api/v1/query?query=otelcol_exporter_queue_size'
+```
+
+Key metrics to watch:
+- `otelcol_exporter_queue_size` - Should stay low
+- `otelcol_exporter_send_failed_*` - Should be zero
+- `kafka_consumergroup_lag` - Consumer lag (if using kafka-exporter)
+
+## Phase 2 Complete
+
+You now have a scalable, highly-available observability stack:
+
+- ✅ Multiple gateways behind load balancer
+- ✅ Kafka buffer for durability
+- ✅ Multiple processors with tail sampling
+- ✅ Scalable storage backends (Tempo, Mimir, Loki)
+- ✅ Stack self-monitoring with Prometheus
+- ✅ Unified visualization in Grafana
+
+**Move to Phase 3 (Kubernetes) when:**
+- Your organization has standardized on Kubernetes
+- You need GitOps workflows
+- You want auto-scaling based on metrics
+- You're running in multiple regions
+
+---
+
+# Phase 3: Kubernetes Deployment
+
+Phase 3 deploys the same architecture on Kubernetes, gaining:
+- Auto-scaling with Horizontal Pod Autoscaler
+- Self-healing with pod restart policies
+- GitOps-friendly declarative configuration
+- Pod disruption budgets for safe maintenance
+- Ingress for external access
+
+## Prerequisites
+
+- Kubernetes cluster (1.24+) with kubectl configured
+- Familiarity with Kubernetes concepts (Deployments, Services, ConfigMaps)
+- Storage class available for PersistentVolumeClaims
+- (Optional) Ingress controller installed
+
+## Step 1: Review Kubernetes Manifests
+
+All Kubernetes manifests are in `configs/kubernetes/`:
+
+```bash
+cd docs/scalable/configs/kubernetes
+ls -la
+```
+
+```
+namespace.yaml       # Observability namespace
+kafka-cluster.yaml   # Strimzi Kafka (requires operator)
+minio.yaml           # S3-compatible object storage
+otel-gateway.yaml    # Gateway deployment + HPA + PDB
+otel-processor.yaml  # Processor deployment + HPA + PDB
+tempo.yaml           # Trace storage StatefulSet
+mimir.yaml           # Metrics storage StatefulSet
+loki.yaml            # Log storage StatefulSet
+grafana.yaml         # Visualization deployment + Ingress
+postgresql.yaml      # Grafana HA database
+prometheus.yaml      # Stack monitoring
+```
+
+## Step 2: Install Prerequisites
+
+### Install Strimzi Kafka Operator
+```bash
+# Create Kafka namespace
+kubectl create namespace kafka
+
+# Install Strimzi operator
+kubectl apply -f 'https://strimzi.io/install/latest?namespace=kafka'
+
+# Wait for operator to be ready
+kubectl wait deployment/strimzi-cluster-operator --for=condition=Available -n kafka --timeout=300s
+```
+
+## Step 3: Deploy in Order
+
+The deployment order matters due to dependencies:
+
+```bash
+# 1. Create namespaces
+kubectl apply -f namespace.yaml
+kubectl create namespace minio
+
+# 2. Deploy MinIO (object storage)
+kubectl apply -f minio.yaml
+kubectl wait pod/minio-0 --for=condition=Ready -n minio --timeout=300s
+
+# 3. Deploy Kafka cluster
+kubectl apply -f kafka-cluster.yaml
+kubectl wait kafka/otel-kafka --for=condition=Ready -n kafka --timeout=600s
+
+# 4. Deploy storage backends
+kubectl apply -f tempo.yaml
+kubectl apply -f mimir.yaml
+kubectl apply -f loki.yaml
+
+# Wait for backends
+kubectl wait pod/tempo-0 --for=condition=Ready -n observability --timeout=300s
+kubectl wait pod/mimir-0 --for=condition=Ready -n observability --timeout=300s
+kubectl wait pod/loki-0 --for=condition=Ready -n observability --timeout=300s
+
+# 5. Deploy monitoring
+kubectl apply -f prometheus.yaml
+kubectl apply -f postgresql.yaml
+
+# 6. Deploy Grafana
+kubectl apply -f grafana.yaml
+
+# 7. Deploy collectors (last - they need backends ready)
+kubectl apply -f otel-gateway.yaml
+kubectl apply -f otel-processor.yaml
+```
+
+## Step 4: Verify Deployment
+
+```bash
+# Check all pods
+kubectl get pods -n observability
+kubectl get pods -n kafka
+kubectl get pods -n minio
+
+# Check services
+kubectl get svc -n observability
+
+# Check HPA status
+kubectl get hpa -n observability
+```
+
+Expected output:
+```
+NAME                   READY   STATUS    RESTARTS   AGE
+grafana-xxx-yyy        1/1     Running   0          5m
+loki-0                 1/1     Running   0          8m
+mimir-0                1/1     Running   0          8m
+otel-gateway-xxx       1/1     Running   0          3m
+otel-gateway-yyy       1/1     Running   0          3m
+otel-gateway-zzz       1/1     Running   0          3m
+otel-processor-xxx     1/1     Running   0          3m
+otel-processor-yyy     1/1     Running   0          3m
+otel-processor-zzz     1/1     Running   0          3m
+prometheus-0           1/1     Running   0          5m
+tempo-0                1/1     Running   0          8m
+```
+
+## Step 5: Configure Ingress
+
+Update the Grafana ingress with your domain:
+
+```bash
+kubectl edit ingress grafana -n observability
+```
+
+Or apply a custom ingress:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: observability
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: grafana.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+```
+
+## Step 6: Configure Applications
+
+Applications should send telemetry to the gateway service:
+
+```bash
+# Get the gateway service endpoint
+kubectl get svc otel-gateway -n observability
+```
+
+Configure your applications:
+```bash
+# If applications are in the same cluster
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-gateway.observability.svc.cluster.local:4317
+
+# If applications are external (requires LoadBalancer or Ingress)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-gateway.yourdomain.com:4317
+```
+
+## Step 7: Expose Gateway Externally (Optional)
+
+For applications outside the cluster, expose the gateway:
+
+**Option A: LoadBalancer**
+```bash
+kubectl patch svc otel-gateway -n observability -p '{"spec": {"type": "LoadBalancer"}}'
+```
+
+**Option B: Ingress (gRPC)**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: otel-gateway
+  namespace: observability
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+spec:
+  rules:
+    - host: otel.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: otel-gateway
+                port:
+                  number: 4317
+```
+
+## Step 8: Verify Auto-Scaling
+
+The HPA will automatically scale collectors based on CPU/memory:
+
+```bash
+# Watch HPA status
+kubectl get hpa -n observability -w
+
+# Generate load and watch scaling
+# (Send high volume of telemetry)
+
+# Check scaled pods
+kubectl get pods -n observability -l app=otel-gateway
+```
+
+## Step 9: Test Pod Disruption Budget
+
+PDBs ensure minimum availability during maintenance:
+
+```bash
+# Check PDB status
+kubectl get pdb -n observability
+
+# Try draining a node (PDB will prevent too many pods from evicting)
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+```
+
+## Customizing for Production
+
+### Update Storage Classes
+
+Edit each StatefulSet to use your cluster's storage class:
+
+```bash
+# Find your storage classes
+kubectl get storageclass
+
+# Update manifests
+sed -i 's/storageClassName: standard/storageClassName: your-storage-class/g' *.yaml
+```
+
+### Update Credentials
+
+**MinIO:**
+```bash
+kubectl create secret generic minio-credentials -n minio \
+  --from-literal=root-user='your-access-key' \
+  --from-literal=root-password='your-secret-key' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**Update S3 credentials in each backend:**
+```bash
+kubectl create secret generic tempo-s3-credentials -n observability \
+  --from-literal=access-key='your-access-key' \
+  --from-literal=secret-key='your-secret-key' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+### Enable Grafana HA with PostgreSQL
+
+Uncomment the PostgreSQL environment variables in `grafana.yaml`:
+```yaml
+env:
+  - name: GF_DATABASE_TYPE
+    value: "postgres"
+  - name: GF_DATABASE_HOST
+    value: "postgresql.observability.svc.cluster.local:5432"
+  # ... etc
+```
+
+## Phase 3 Complete
+
+You now have a production-ready Kubernetes deployment:
+
+- ✅ Auto-scaling collectors (HPA)
+- ✅ High availability with PDBs
+- ✅ Object storage backend (MinIO/S3)
+- ✅ Kafka for durable buffering (Strimzi)
+- ✅ Stack self-monitoring
+- ✅ Ingress for external access
 
 ---
 

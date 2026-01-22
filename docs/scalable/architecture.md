@@ -78,6 +78,27 @@ You're debugging a production incident at 2 AM. A customer reports that their ch
 
 Or maybe you've had the budget conversation. Your team finally gets approval for a proper observability solution. You evaluate Datadog, New Relic, Splunk—they're fantastic tools. Then you see the quote. For your 50-service architecture processing 20,000 events per second, you're looking at $20,000 to $40,000 per month. That's $240,000 to $480,000 per year—just to understand what your own software is doing.
 
+**A Real-World Wake-Up Call**
+
+This guide was born from a real experience that made the cost problem impossible to ignore. We built a system center agent—a Go application that collects system metadata from nodes in data center clusters. It gathers everything: node health, installed software, GPU information, and various deployment configurations. The agent was deployed across more than 5,000 nodes.
+
+For monitoring all this telemetry, we initially chose a well-known commercial observability platform. It seemed like the right choice—great features, easy setup, excellent documentation. Then the first invoice arrived.
+
+The bill? **Over $150,000 for a single month.**
+
+Here's how the costs broke down:
+- **$25 per node per month** for infrastructure monitoring
+- **$12 per node per month** for APM (application performance monitoring)
+- **Additional charges** for log ingestion, trace storage, and data volume
+
+When we calculated the annual cost, the number was staggering: **$1.5 million per year**—just to monitor our own infrastructure. And this wasn't even accounting for growth. As we added more nodes, the costs would only increase.
+
+For some organizations and use cases, this cost might be justifiable. But for many teams and projects, it simply isn't feasible. That $1.5 million could fund an entire engineering team. It could be invested in product development, infrastructure improvements, or reducing technical debt. Spending it on observability licensing—while those commercial tools are genuinely excellent—felt like the wrong trade-off.
+
+That's when we decided to look for alternatives. We knew we wanted open-source solutions—not just for the cost savings, but for the flexibility, data ownership, and freedom from vendor lock-in. What started as a cost-driven decision became an opportunity to build something better suited to our needs.
+
+**Why This Guide Exists**
+
 This guide exists because we believe there's a better way. Not better than the commercial tools in terms of features—they're genuinely excellent—but better for organizations where that kind of budget simply isn't realistic, or where spending that much on observability means sacrificing other critical investments.
 
 What follows is a battle-tested architecture for building a self-hosted observability platform using open-source software. It's the same architecture we've used to achieve 97% cost savings while maintaining the visibility we need to run reliable production systems.

@@ -1,0 +1,13 @@
+# Mimir Runtime Configuration
+#
+# This file can be updated without restarting Mimir
+# Changes are picked up automatically every 10 seconds
+#
+
+overrides:
+  # Default tenant overrides (when multi-tenancy is disabled, this applies to all)
+  # Uncomment and modify for specific tenants when multi-tenancy is enabled
+  
+  # anonymous:
+  #   ingestion_rate: 150000
+  #   max_global_series_per_user: 2000000

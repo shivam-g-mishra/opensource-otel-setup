@@ -23,23 +23,39 @@ All configuration files are in the [configs/](./configs/) directory:
 
 ```
 configs/
-├── docker/                    # Docker Compose deployments
-│   ├── docker-compose-single.yaml   # Single-node setup
-│   ├── docker-compose-scalable.yaml # Multi-node with Kafka
-│   ├── otel-collector.yaml          # Single collector config
-│   ├── otel-gateway.yaml            # Gateway collector config
-│   ├── otel-processor.yaml          # Processor collector config
-│   └── haproxy.cfg                  # Load balancer config
+├── docker/                         # Docker Compose deployments
+│   ├── docker-compose-single.yaml  # Phase 1: Single-node setup
+│   ├── docker-compose-scalable.yaml # Phase 2: Multi-node with Kafka
+│   ├── otel-collector.yaml         # Single collector config
+│   ├── otel-gateway.yaml           # Gateway collector config
+│   ├── otel-processor.yaml         # Processor collector config
+│   ├── haproxy.cfg                 # Load balancer config
+│   ├── tempo.yaml                  # Trace storage config
+│   ├── mimir.yaml                  # Metrics storage config
+│   ├── loki.yaml                   # Log storage config
+│   ├── prometheus.yml              # Stack self-monitoring
+│   └── grafana/provisioning/       # Grafana datasources & dashboards
 │
-├── kubernetes/               # Kubernetes manifests
+├── kubernetes/                     # Kubernetes manifests (Phase 3)
+│   ├── namespace.yaml              # Observability namespace
 │   ├── otel-gateway.yaml           # Gateway deployment + HPA + PDB
-│   └── kafka-cluster.yaml          # Strimzi Kafka cluster
+│   ├── otel-processor.yaml         # Processor deployment + HPA + PDB
+│   ├── kafka-cluster.yaml          # Strimzi Kafka cluster
+│   ├── minio.yaml                  # MinIO object storage
+│   ├── tempo.yaml                  # Tempo trace storage
+│   ├── mimir.yaml                  # Mimir metrics storage
+│   ├── loki.yaml                   # Loki log storage
+│   ├── grafana.yaml                # Grafana HA + Ingress
+│   ├── postgresql.yaml             # PostgreSQL for Grafana HA
+│   └── prometheus.yaml             # Stack self-monitoring
 │
-└── scripts/                  # Operational scripts
+└── scripts/                        # Operational scripts
     ├── backup.sh                   # Backup all volumes
     ├── restore.sh                  # Restore from backup
     └── health-check.sh             # Check stack health
 ```
+
+For detailed configuration documentation, see [configs/README.md](./configs/README.md).
 
 ## Architecture Summary
 

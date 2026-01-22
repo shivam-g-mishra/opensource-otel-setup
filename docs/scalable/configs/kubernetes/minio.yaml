@@ -1,0 +1,251 @@
+# Kubernetes - MinIO Object Storage
+#
+# S3-compatible object storage for Tempo, Mimir, and Loki
+# Single-node deployment for development/small production
+# For production, consider MinIO Operator or cloud object storage
+#
+# Apply: kubectl apply -f minio.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+  labels:
+    name: minio
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: minio
+type: Opaque
+stringData:
+  # CHANGE THESE IN PRODUCTION
+  root-user: "minioadmin"
+  root-password: "minioadmin123"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-init-script
+  namespace: minio
+data:
+  init-buckets.sh: |
+    #!/bin/sh
+    set -e
+    
+    # Wait for MinIO to be ready
+    until mc alias set myminio http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do
+      echo "Waiting for MinIO..."
+      sleep 2
+    done
+    
+    # Create buckets for observability backends
+    mc mb --ignore-existing myminio/tempo-traces
+    mc mb --ignore-existing myminio/mimir-blocks
+    mc mb --ignore-existing myminio/mimir-ruler
+    mc mb --ignore-existing myminio/mimir-alertmanager
+    mc mb --ignore-existing myminio/loki-chunks
+    mc mb --ignore-existing myminio/loki-ruler
+    
+    # Set lifecycle policies (optional - for cost management)
+    # mc ilm add myminio/tempo-traces --expiry-days 30
+    
+    echo "Buckets created successfully"
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
+            - name: MINIO_PROMETHEUS_AUTH_TYPE
+              value: "public"
+          ports:
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      
+      # Init container to create buckets
+      initContainers:
+        - name: create-buckets
+          image: minio/mc:RELEASE.2024-01-16T16-06-34Z
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Wait for minio container to start (this runs as init, so minio isn't up yet)
+              # Instead, use a post-start lifecycle hook or a separate job
+              echo "Bucket creation will be handled by lifecycle hook"
+  
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard  # Change to your storage class
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  type: ClusterIP
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: console
+      port: 9001
+      targetPort: 9001
+      protocol: TCP
+  selector:
+    app: minio
+
+---
+# Job to create buckets after MinIO is ready
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-buckets
+  namespace: minio
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2024-01-16T16-06-34Z
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              # Wait for MinIO to be ready
+              until mc alias set myminio http://minio.minio.svc.cluster.local:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do
+                echo "Waiting for MinIO..."
+                sleep 5
+              done
+              
+              # Create buckets
+              mc mb --ignore-existing myminio/tempo-traces
+              mc mb --ignore-existing myminio/mimir-blocks
+              mc mb --ignore-existing myminio/mimir-ruler
+              mc mb --ignore-existing myminio/mimir-alertmanager
+              mc mb --ignore-existing myminio/loki-chunks
+              mc mb --ignore-existing myminio/loki-ruler
+              
+              echo "All buckets created successfully"
+
+# ---
+# # ServiceMonitor for Prometheus (if using Prometheus Operator)
+# # Uncomment if you have prometheus-operator installed
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: minio
+#   namespace: minio
+#   labels:
+#     app: minio
+# spec:
+#   selector:
+#     matchLabels:
+#       app: minio
+#   endpoints:
+#     - port: api
+#       path: /minio/v2/metrics/cluster
+#       interval: 30s

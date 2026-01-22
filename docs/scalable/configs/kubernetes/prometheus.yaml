@@ -1,0 +1,383 @@
+# Kubernetes - Prometheus for Stack Monitoring
+#
+# Prometheus - Self-monitoring for the observability stack
+# Scrapes metrics from all observability components
+#
+# Apply: kubectl apply -f prometheus.yaml
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'kubernetes'
+        environment: 'production'
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: []
+    
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+    
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      # OTel Gateway collectors
+      - job_name: 'otel-gateway'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: otel-gateway
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+      
+      # OTel Processor collectors
+      - job_name: 'otel-processor'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: otel-processor
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+      
+      # Tempo
+      - job_name: 'tempo'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: tempo
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      
+      # Mimir
+      - job_name: 'mimir'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: mimir
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      
+      # Loki
+      - job_name: 'loki'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: loki
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      
+      # Grafana
+      - job_name: 'grafana'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: grafana
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      
+      # MinIO
+      - job_name: 'minio'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - minio
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: minio
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+        metrics_path: /minio/v2/metrics/cluster
+      
+      # Kafka (if using Strimzi with metrics)
+      - job_name: 'kafka'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - kafka
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
+            regex: Kafka
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+        metrics_path: /metrics
+
+  otel-stack-alerts.yml: |
+    groups:
+      - name: otel-collector
+        interval: 30s
+        rules:
+          - alert: OTelCollectorDown
+            expr: up{job=~"otel-.*"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "OTel Collector {{ $labels.pod }} is down"
+              description: "OTel Collector {{ $labels.pod }} has been down for more than 2 minutes."
+          
+          - alert: OTelCollectorExportFailures
+            expr: |
+              rate(otelcol_exporter_send_failed_spans_total[5m]) > 0
+              or rate(otelcol_exporter_send_failed_metric_points_total[5m]) > 0
+              or rate(otelcol_exporter_send_failed_log_records_total[5m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "OTel Collector {{ $labels.pod }} export failures"
+              description: "OTel Collector is experiencing export failures."
+          
+          - alert: OTelCollectorQueueBacklog
+            expr: otelcol_exporter_queue_size > 5000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "OTel Collector queue backlog"
+              description: "OTel Collector has {{ $value }} items in export queue."
+      
+      - name: storage-backends
+        interval: 30s
+        rules:
+          - alert: TempoDown
+            expr: up{job="tempo"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Tempo is down"
+              description: "Tempo has been down for more than 2 minutes."
+          
+          - alert: MimirDown
+            expr: up{job="mimir"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Mimir is down"
+              description: "Mimir has been down for more than 2 minutes."
+          
+          - alert: LokiDown
+            expr: up{job="loki"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Loki is down"
+              description: "Loki has been down for more than 2 minutes."
+          
+          - alert: GrafanaDown
+            expr: up{job="grafana"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Grafana is down"
+              description: "Grafana has been down for more than 2 minutes."
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: observability
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: observability
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus
+  namespace: observability
+  labels:
+    app: prometheus
+spec:
+  serviceName: prometheus
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsUser: 65534
+        runAsNonRoot: true
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.48.0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+            - '--web.enable-lifecycle'
+            - '--web.enable-admin-api'
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 50Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: observability
+  labels:
+    app: prometheus
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    app: prometheus

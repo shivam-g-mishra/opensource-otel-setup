@@ -1,0 +1,126 @@
+# Prometheus Configuration for Scalable Setup
+#
+# Prometheus - Stack self-monitoring
+# Scrapes metrics from all observability components
+#
+# Note: In the scalable setup, Mimir handles application metrics.
+# This Prometheus instance monitors the observability stack itself.
+#
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'otel-scalable'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # Add alertmanager:9093 if using Alertmanager
+
+# Rule files for alerting
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# Scrape configurations
+scrape_configs:
+  # =============================================================================
+  # Prometheus self-monitoring
+  # =============================================================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+
+  # =============================================================================
+  # HAProxy Load Balancer
+  # =============================================================================
+  - job_name: 'haproxy'
+    static_configs:
+      - targets: ['haproxy:8404']
+    metrics_path: /stats
+    params:
+      stats: ['']
+
+  # =============================================================================
+  # OTel Collector - Gateways
+  # =============================================================================
+  - job_name: 'otel-gateway'
+    dns_sd_configs:
+      - names:
+          - 'otel-gateway'
+        type: 'A'
+        port: 8888
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):8888'
+        replacement: '${1}'
+
+  # =============================================================================
+  # OTel Collector - Processors
+  # =============================================================================
+  - job_name: 'otel-processor'
+    dns_sd_configs:
+      - names:
+          - 'otel-processor'
+        type: 'A'
+        port: 8888
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):8888'
+        replacement: '${1}'
+
+  # =============================================================================
+  # Kafka
+  # =============================================================================
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9092']
+    # Note: Kafka JMX metrics require additional exporter setup
+    # Consider using kafka-exporter or JMX exporter sidecar
+
+  # =============================================================================
+  # Tempo - Distributed Tracing
+  # =============================================================================
+  - job_name: 'tempo'
+    static_configs:
+      - targets: ['tempo:3200']
+    metrics_path: /metrics
+
+  # =============================================================================
+  # Mimir - Metrics Storage
+  # =============================================================================
+  - job_name: 'mimir'
+    static_configs:
+      - targets: ['mimir:9009']
+    metrics_path: /metrics
+
+  # =============================================================================
+  # Loki - Log Aggregation
+  # =============================================================================
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+    metrics_path: /metrics
+
+  # =============================================================================
+  # Grafana - Visualization
+  # =============================================================================
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    metrics_path: /metrics
+
+# Remote write to Mimir for long-term storage (optional)
+# Uncomment to store stack metrics in Mimir alongside application metrics
+# remote_write:
+#   - url: http://mimir:9009/api/v1/push
+#     remote_timeout: 30s
+#     queue_config:
+#       capacity: 10000
+#       max_shards: 50
+#       max_samples_per_send: 5000

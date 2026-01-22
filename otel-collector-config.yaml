@@ -70,10 +70,10 @@ processors:
   resource:
     attributes:
       - key: service.namespace
-        value: ${SERVICE_NAMESPACE:-default}
+        value: "${SERVICE_NAMESPACE}"
         action: upsert
       - key: deployment.environment
-        value: ${DEPLOYMENT_ENV:-development}
+        value: "${DEPLOYMENT_ENV}"
         action: upsert
 
   # Attributes processor - Add custom attributes to spans/metrics
@@ -107,7 +107,6 @@ exporters:
       enabled: true
       num_consumers: 10
       queue_size: 10000
-      storage: file_storage
     keepalive:
       time: 30s
       timeout: 10s
@@ -142,7 +141,6 @@ exporters:
       enabled: true
       num_consumers: 10
       queue_size: 10000
-      storage: file_storage
 
   # Debug logging - useful for troubleshooting
   debug:
@@ -158,8 +156,6 @@ extensions:
   health_check:
     endpoint: 0.0.0.0:13133
     path: /health
-    tls:
-      insecure: true
 
   # Performance profiling
   pprof:
@@ -169,21 +165,11 @@ extensions:
   zpages:
     endpoint: 0.0.0.0:55679
 
-  # File storage - CRITICAL: Enables persistent queues
-  # Data survives collector restarts
-  file_storage:
-    directory: /var/lib/otelcol/storage
-    timeout: 10s
-    compaction:
-      on_start: true
-      on_rebound: true
-      directory: /var/lib/otelcol/storage/compaction
-
 # -----------------------------------------------------------------------------
 # SERVICE - Wire everything together
 # -----------------------------------------------------------------------------
 service:
-  extensions: [health_check, pprof, zpages, file_storage]
+  extensions: [health_check, pprof, zpages]
   
   telemetry:
     logs:

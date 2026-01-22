@@ -1,0 +1,118 @@
+# Grafana Data Sources - Scalable Setup
+#
+# Auto-provisioned data sources for the scalable observability stack
+# Connects to Tempo (traces), Mimir (metrics), and Loki (logs)
+#
+
+apiVersion: 1
+
+# Delete data sources not defined in this file
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
+datasources:
+  # ===========================================================================
+  # Mimir - Metrics (PromQL compatible)
+  # ===========================================================================
+  - name: Mimir
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    isDefault: true
+    editable: false
+    uid: mimir
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Mimir
+      exemplarTraceIdDestinations:
+        - name: traceID
+          datasourceUid: tempo
+          urlDisplayLabel: "View Trace"
+
+  # ===========================================================================
+  # Tempo - Traces (TraceQL)
+  # ===========================================================================
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    uid: tempo
+    jsonData:
+      httpMethod: GET
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: true
+        filterBySpanID: false
+        customQuery: true
+        query: '{$${__tags}} |= "$${__span.traceId}"'
+      tracesToMetrics:
+        datasourceUid: mimir
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        tags:
+          - key: service.name
+            value: service
+          - key: service.namespace
+            value: namespace
+        queries:
+          - name: Request Rate
+            query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))'
+          - name: Error Rate
+            query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags, status_code="STATUS_CODE_ERROR"}[5m]))'
+          - name: Duration (p95)
+            query: 'histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])) by (le))'
+      serviceMap:
+        datasourceUid: mimir
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki
+      search:
+        hide: false
+      traceQuery:
+        timeShiftEnabled: true
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+
+  # ===========================================================================
+  # Loki - Logs (LogQL)
+  # ===========================================================================
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    uid: loki
+    jsonData:
+      timeout: 300
+      maxLines: 1000
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '"trace_id":"?([a-fA-F0-9]+)"?'
+          url: '$${__value.raw}'
+          datasourceUid: tempo
+          urlDisplayLabel: "View Trace"
+        - name: trace_id
+          matcherRegex: 'trace_id=([a-fA-F0-9]+)'
+          url: '$${__value.raw}'
+          datasourceUid: tempo
+          urlDisplayLabel: "View Trace"
+
+  # ===========================================================================
+  # Prometheus - Stack Monitoring (optional, for self-monitoring)
+  # ===========================================================================
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    editable: false
+    uid: prometheus
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST

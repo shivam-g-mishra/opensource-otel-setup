@@ -1,0 +1,35 @@
+# Alertmanager Fallback Configuration
+#
+# Used by Mimir when no tenant-specific alertmanager config exists
+#
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: 'default'
+    # Configure your notification channels here
+    # Example for Slack:
+    # slack_configs:
+    #   - channel: '#alerts'
+    #     send_resolved: true
+    #     api_url: 'https://hooks.slack.com/services/...'
+    
+    # Example for PagerDuty:
+    # pagerduty_configs:
+    #   - service_key: '<your-service-key>'
+    #     send_resolved: true
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname']

@@ -31,6 +31,7 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.51
     container_name: otel-jaeger
+    user: "0:0"  # Run as root to fix volume permission issues
     logging:
       driver: "json-file"
       options:
@@ -170,6 +171,9 @@ services:
         max-size: "50m"
         max-file: "5"
     command: ["--config=/etc/otel-collector-config.yaml"]
+    environment:
+      - SERVICE_NAMESPACE=${SERVICE_NAMESPACE:-default}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-development}
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
       - otel-collector-data:/var/lib/otelcol
@@ -201,11 +205,11 @@ services:
           cpus: '0.5'
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
   # ===========================================
   # Grafana - Dashboards & Visualization
