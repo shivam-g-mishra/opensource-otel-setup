@@ -129,6 +129,16 @@ make restore     # Restore from backup
 make clean       # Remove all data (destructive!)
 ```
 
+### Logs & Debugging
+
+```bash
+make logs            # View all service logs (follow mode)
+make logs-collector  # OTel Collector logs only
+make logs-jaeger     # Jaeger logs only
+make logs-loki       # Loki logs only
+make logs-prometheus # Prometheus logs only
+```
+
 ### Development
 
 ```bash
@@ -154,6 +164,7 @@ This stack is built for production reliability:
 | **Retry Policies** | Exponential backoff for transient failures |
 | **Automated Backups** | Scripts for backup and restore |
 | **Self-Monitoring** | 30+ alerting rules included |
+| **Log Rotation** | Container logs auto-rotate to prevent disk fill |
 
 ### Backup & Restore
 
@@ -181,6 +192,50 @@ make deploy-quick
 # Deploy with image updates
 make deploy-pull
 ```
+
+### Container Logs
+
+All containers have log rotation configured to prevent disk exhaustion. Logs automatically rotate when they reach their size limit.
+
+| Service | Max Size | Max Files | Total Max |
+|---------|----------|-----------|-----------|
+| OTel Collector | 50MB | 5 | 250MB |
+| Loki | 50MB | 5 | 250MB |
+| Jaeger | 30MB | 3 | 90MB |
+| Prometheus | 20MB | 3 | 60MB |
+| Grafana | 10MB | 3 | 30MB |
+| Node Exporter | 10MB | 2 | 20MB |
+
+**View logs:**
+
+```bash
+# All services (follow mode)
+make logs
+
+# Specific service
+docker logs otel-collector
+docker logs otel-collector --tail 100        # Last 100 lines
+docker logs otel-collector --since 1h        # Last hour
+docker logs otel-collector -f                # Follow/stream
+
+# By service name
+make logs-collector    # OTel Collector logs
+make logs-jaeger       # Jaeger logs
+make logs-loki         # Loki logs
+make logs-prometheus   # Prometheus logs
+```
+
+**Check log disk usage:**
+
+```bash
+# See log file sizes for all containers
+docker system df -v | grep -E "CONTAINER|otel"
+
+# Detailed log path for a specific container
+docker inspect --format='{{.LogPath}}' otel-collector
+```
+
+**Note:** These are Docker container logs (stdout/stderr). Your application logs sent via OTLP are stored in Loki and viewable in Grafana.
 
 ## Configuration
 

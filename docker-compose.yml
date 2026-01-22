@@ -31,6 +31,11 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.51
     container_name: otel-jaeger
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"    # Jaeger UI
       - "6831:6831/udp"                      # Jaeger agent (Thrift compact)
@@ -74,6 +79,11 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.0
     container_name: otel-prometheus
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts:/etc/prometheus/alerts:ro
@@ -116,6 +126,11 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: otel-loki
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     ports:
       - "${LOKI_PORT:-3100}:3100"
     environment:
@@ -149,6 +164,11 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.91.0
     container_name: otel-collector
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
@@ -193,6 +213,11 @@ services:
   grafana:
     image: grafana/grafana:10.2.0
     container_name: otel-grafana
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     environment:
@@ -238,6 +263,11 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.7.0
     container_name: otel-node-exporter
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
@@ -276,6 +306,11 @@ services:
   seq:
     image: datalust/seq:latest
     container_name: otel-seq
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
     profiles:
       - seq
       - full
