@@ -1,0 +1,244 @@
+# =============================================================================
+# OpenTelemetry Stack Alerting Rules
+# =============================================================================
+# Alerts for monitoring the observability stack itself.
+# Import additional community alerts as needed.
+# =============================================================================
+
+groups:
+  # ===========================================================================
+  # OTel Collector Alerts
+  # ===========================================================================
+  - name: otel-collector
+    rules:
+      - alert: OTelCollectorDown
+        expr: up{job="otel-collector"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OTel Collector is down"
+          description: "The OpenTelemetry Collector has been down for more than 1 minute."
+
+      - alert: OTelCollectorHighMemory
+        expr: otelcol_process_memory_rss / 1024 / 1024 > 1600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector high memory usage"
+          description: "OTel Collector memory usage is above 1.6GB ({{ $value | printf \"%.0f\" }}MB)."
+
+      - alert: OTelCollectorQueueFilling
+        expr: otelcol_exporter_queue_size > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector queue filling up"
+          description: "Export queue has {{ $value }} items (>5000). Backend may be slow or down."
+
+      - alert: OTelCollectorQueueFull
+        expr: otelcol_exporter_queue_size > 9000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OTel Collector queue nearly full"
+          description: "Export queue has {{ $value }} items (>9000). Data loss imminent."
+
+      - alert: OTelCollectorDroppedSpans
+        expr: rate(otelcol_processor_dropped_spans[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OTel Collector dropping spans"
+          description: "Collector is dropping {{ $value | printf \"%.2f\" }} spans/sec."
+
+      - alert: OTelCollectorDroppedMetrics
+        expr: rate(otelcol_processor_dropped_metric_points[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OTel Collector dropping metrics"
+          description: "Collector is dropping {{ $value | printf \"%.2f\" }} metric points/sec."
+
+      - alert: OTelCollectorDroppedLogs
+        expr: rate(otelcol_processor_dropped_log_records[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OTel Collector dropping logs"
+          description: "Collector is dropping {{ $value | printf \"%.2f\" }} log records/sec."
+
+      - alert: OTelCollectorExportFailures
+        expr: rate(otelcol_exporter_send_failed_spans[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector export failures"
+          description: "Collector failing to export {{ $value | printf \"%.2f\" }} spans/sec."
+
+      - alert: OTelCollectorHighCPU
+        expr: rate(otelcol_process_cpu_seconds[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector high CPU usage"
+          description: "Collector CPU usage is {{ $value | printf \"%.1f\" }}%."
+
+  # ===========================================================================
+  # Prometheus Alerts
+  # ===========================================================================
+  - name: prometheus
+    rules:
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus is down"
+          description: "Prometheus has been down for more than 1 minute."
+
+      - alert: PrometheusHighMemory
+        expr: process_resident_memory_bytes{job="prometheus"} / 1024 / 1024 / 1024 > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus high memory usage"
+          description: "Prometheus memory usage is above 3GB ({{ $value | printf \"%.1f\" }}GB)."
+
+      - alert: PrometheusStorageFilling
+        expr: (prometheus_tsdb_storage_blocks_bytes / 1024 / 1024 / 1024) > 40
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus storage filling up"
+          description: "Prometheus storage is {{ $value | printf \"%.1f\" }}GB."
+
+      - alert: PrometheusTargetsMissing
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus target down"
+          description: "Target {{ $labels.job }} ({{ $labels.instance }}) is down."
+
+      - alert: PrometheusConfigReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus config reload failed"
+          description: "Prometheus failed to reload configuration."
+
+  # ===========================================================================
+  # Loki Alerts
+  # ===========================================================================
+  - name: loki
+    rules:
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Loki is down"
+          description: "Loki has been down for more than 1 minute."
+
+      - alert: LokiIngestionErrors
+        expr: rate(loki_distributor_ingester_append_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki ingestion failures"
+          description: "Loki is experiencing ingestion failures."
+
+      - alert: LokiRequestErrors
+        expr: rate(loki_request_duration_seconds_count{status_code=~"5.."}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki request errors"
+          description: "Loki is returning 5xx errors."
+
+  # ===========================================================================
+  # Jaeger Alerts
+  # ===========================================================================
+  - name: jaeger
+    rules:
+      - alert: JaegerDown
+        expr: up{job="jaeger"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Jaeger is down"
+          description: "Jaeger has been down for more than 1 minute."
+
+      - alert: JaegerStorageHigh
+        expr: jaeger_badger_lsm_size_bytes / 1024 / 1024 / 1024 > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Jaeger storage high"
+          description: "Jaeger Badger storage is {{ $value | printf \"%.1f\" }}GB."
+
+  # ===========================================================================
+  # Grafana Alerts
+  # ===========================================================================
+  - name: grafana
+    rules:
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Grafana is down"
+          description: "Grafana has been down for more than 1 minute."
+
+  # ===========================================================================
+  # General Infrastructure Alerts
+  # ===========================================================================
+  - name: infrastructure
+    rules:
+      - alert: HighDiskUsage
+        expr: 100 - ((node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage"
+          description: "Disk usage is above 85% ({{ $value | printf \"%.1f\" }}%)."
+
+      - alert: CriticalDiskUsage
+        expr: 100 - ((node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100) > 95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk usage"
+          description: "Disk usage is above 95% ({{ $value | printf \"%.1f\" }}%). Immediate action required."
+
+      - alert: ContainerRestarting
+        expr: increase(container_restart_count[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container restarting frequently"
+          description: "Container {{ $labels.name }} has restarted {{ $value }} times in the last hour."

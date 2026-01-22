@@ -16,16 +16,16 @@ global:
   external_labels:
     monitor: 'otel-stack'       # Label added to all metrics
 
-# Alertmanager configuration (optional)
+# Alertmanager configuration (optional - uncomment to enable)
 # alerting:
 #   alertmanagers:
 #     - static_configs:
 #         - targets:
 #           - alertmanager:9093
 
-# Rule files (optional)
-# rule_files:
-#   - /etc/prometheus/rules/*.yml
+# Alerting rules - monitors the observability stack itself
+rule_files:
+  - /etc/prometheus/alerts/*.yml
 
 scrape_configs:
   # ---------------------------------------------

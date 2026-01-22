@@ -1,11 +1,11 @@
 # =============================================================================
 # OpenTelemetry Collector Configuration
 # =============================================================================
-# This configuration provides a production-ready setup for collecting,
-# processing, and exporting telemetry data (traces, metrics, logs).
-#
-# Architecture:
-#   Your App → [Receivers] → [Processors] → [Exporters] → Backends
+# Production-ready setup with reliability features:
+#   - Persistent queues (survives restarts)
+#   - Enhanced retry policies with exponential backoff
+#   - Memory limiting to prevent OOM
+#   - Connection keep-alive
 #
 # Endpoints for your application:
 #   - OTLP gRPC: localhost:4317 (recommended for high throughput)
@@ -22,12 +22,14 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
-        # Optional: Configure max message size (default 4MB)
-        # max_recv_msg_size_mib: 4
+        max_recv_msg_size_mib: 4
+        keepalive:
+          server_parameters:
+            time: 30s
+            timeout: 10s
       http:
         endpoint: 0.0.0.0:4318
         # CORS configuration - restrict for production!
-        # For production, specify exact origins instead of wildcards
         cors:
           allowed_origins:
             - "http://*"
@@ -37,7 +39,6 @@ receivers:
           # Production example:
           # allowed_origins:
           #   - "https://myapp.example.com"
-          #   - "https://admin.example.com"
 
   # Self-monitoring - collector's own metrics
   prometheus:
@@ -48,41 +49,29 @@ receivers:
           static_configs:
             - targets: ['localhost:8888']
 
-  # Optional: Host metrics (uncomment to enable)
-  # hostmetrics:
-  #   collection_interval: 30s
-  #   scrapers:
-  #     cpu:
-  #     memory:
-  #     disk:
-  #     network:
-
 # -----------------------------------------------------------------------------
 # PROCESSORS - Transform and enrich data
 # -----------------------------------------------------------------------------
 processors:
   # Memory limiter - CRITICAL: Prevents OOM crashes
-  # Place first in pipeline to protect against data spikes
+  # Set to 80% of container memory limit (2GB -> 1600MiB)
   memory_limiter:
     check_interval: 1s
-    limit_mib: 512           # Hard limit
-    spike_limit_mib: 128     # Buffer for spikes
-    # limit_percentage: 75   # Alternative: percentage of available memory
+    limit_mib: 1600
+    spike_limit_mib: 400
 
   # Batch processor - Improves performance by batching requests
   batch:
-    timeout: 10s             # Max time to wait before sending
-    send_batch_size: 1024    # Max items per batch
-    send_batch_max_size: 2048 # Absolute max (prevents huge batches)
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
 
   # Resource processor - Add/modify resource attributes
   resource:
     attributes:
-      # Add service namespace for multi-tenant environments
       - key: service.namespace
         value: ${SERVICE_NAMESPACE:-default}
         action: upsert
-      # Add deployment environment
       - key: deployment.environment
         value: ${DEPLOYMENT_ENV:-development}
         action: upsert
@@ -97,19 +86,6 @@ processors:
         value: "0.91.0"
         action: insert
 
-  # Optional: Tail-based sampling (uncomment for production)
-  # Keeps all error traces, samples others
-  # tail_sampling:
-  #   decision_wait: 10s
-  #   num_traces: 100000
-  #   policies:
-  #     - name: errors-policy
-  #       type: status_code
-  #       status_code: {status_codes: [ERROR]}
-  #     - name: randomized-policy
-  #       type: probabilistic
-  #       probabilistic: {sampling_percentage: 10}
-
 # -----------------------------------------------------------------------------
 # EXPORTERS - Where data goes
 # -----------------------------------------------------------------------------
@@ -119,65 +95,66 @@ exporters:
     endpoint: jaeger:4317
     tls:
       insecure: true
-    # Retry configuration for fault tolerance
+    timeout: 30s
     retry_on_failure:
       enabled: true
-      initial_interval: 5s
-      max_interval: 30s
+      initial_interval: 1s
+      randomization_factor: 0.5
+      multiplier: 2
+      max_interval: 60s
       max_elapsed_time: 300s
-    # Queue configuration to buffer during outages
     sending_queue:
       enabled: true
       num_consumers: 10
-      queue_size: 5000
+      queue_size: 10000
+      storage: file_storage
+    keepalive:
+      time: 30s
+      timeout: 10s
+      permit_without_stream: true
 
-  # Prometheus exporter - for metrics
+  # Prometheus exporter - for metrics (pull-based, no queue needed)
   prometheus:
     endpoint: "0.0.0.0:8889"
-    namespace: app                    # Prefix for all metrics
+    namespace: app
     const_labels:
-      collector: otel                 # Static label on all metrics
+      collector: otel
     resource_to_telemetry_conversion:
-      enabled: true                   # Include resource attributes as labels
+      enabled: true
 
   # Loki exporter - for logs
   loki:
     endpoint: http://loki:3100/loki/api/v1/push
     tls:
       insecure: true
-    # Default labels added to all log streams
+    timeout: 30s
     default_labels_enabled:
       exporter: true
       job: true
-    # Retry configuration for fault tolerance
     retry_on_failure:
       enabled: true
-      initial_interval: 5s
-      max_interval: 30s
+      initial_interval: 1s
+      randomization_factor: 0.5
+      multiplier: 2
+      max_interval: 60s
       max_elapsed_time: 300s
-    # Queue configuration to buffer during outages
     sending_queue:
       enabled: true
       num_consumers: 10
-      queue_size: 5000
+      queue_size: 10000
+      storage: file_storage
 
   # Debug logging - useful for troubleshooting
   debug:
-    verbosity: normal                 # detailed, normal, basic
-    sampling_initial: 5               # Log first N of each type
-    sampling_thereafter: 200          # Then log every Nth
-
-  # Optional: OTLP exporter for other backends
-  # otlp/other:
-  #   endpoint: "other-backend:4317"
-  #   headers:
-  #     api-key: ${API_KEY}
+    verbosity: basic
+    sampling_initial: 2
+    sampling_thereafter: 500
 
 # -----------------------------------------------------------------------------
 # EXTENSIONS - Additional capabilities
 # -----------------------------------------------------------------------------
 extensions:
-  # Health check - for container orchestration (K8s, Docker)
+  # Health check - for container orchestration
   health_check:
     endpoint: 0.0.0.0:13133
     path: /health
@@ -192,38 +169,40 @@ extensions:
   zpages:
     endpoint: 0.0.0.0:55679
 
-  # Optional: File storage for persistent queues
-  # file_storage:
-  #   directory: /var/lib/otelcol/file_storage
+  # File storage - CRITICAL: Enables persistent queues
+  # Data survives collector restarts
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    timeout: 10s
+    compaction:
+      on_start: true
+      on_rebound: true
+      directory: /var/lib/otelcol/storage/compaction
 
 # -----------------------------------------------------------------------------
 # SERVICE - Wire everything together
 # -----------------------------------------------------------------------------
 service:
-  extensions: [health_check, pprof, zpages]
+  extensions: [health_check, pprof, zpages, file_storage]
   
-  # Telemetry about the collector itself
   telemetry:
     logs:
-      level: info                     # debug, info, warn, error
+      level: info
     metrics:
-      level: detailed                 # none, basic, normal, detailed
+      level: detailed
       address: 0.0.0.0:8888
 
   pipelines:
-    # Traces pipeline
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource, attributes]
       exporters: [otlp/jaeger, debug]
     
-    # Metrics pipeline
     metrics:
       receivers: [otlp, prometheus]
       processors: [memory_limiter, batch, resource, attributes]
       exporters: [prometheus, debug]
     
-    # Logs pipeline - exports to Loki for querying in Grafana
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]

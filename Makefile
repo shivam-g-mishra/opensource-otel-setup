@@ -10,7 +10,7 @@
 #   make status   - Check service health
 # =============================================================================
 
-.PHONY: help up down stop start restart status logs clean ps shell
+.PHONY: help up down stop start restart status logs clean ps shell backup restore deploy
 
 # Default target
 .DEFAULT_GOAL := help
@@ -30,14 +30,34 @@ help:
 	@echo "$(YELLOW)Usage:$(NC)"
 	@echo "  make $(GREEN)<command>$(NC)"
 	@echo ""
-	@echo "$(YELLOW)Commands:$(NC)"
-	@grep -E '^## ' $(MAKEFILE_LIST) | sed -e 's/## /  /' | awk -F': ' '{printf "$(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
+	@echo "$(YELLOW)Core Commands:$(NC)"
+	@echo "  $(GREEN)up$(NC)              Start the stack"
+	@echo "  $(GREEN)down$(NC)            Stop the stack (preserves data)"
+	@echo "  $(GREEN)restart$(NC)         Restart all services"
+	@echo "  $(GREEN)status$(NC)          Check service health"
+	@echo "  $(GREEN)logs$(NC)            View logs from all services"
+	@echo ""
+	@echo "$(YELLOW)Operations:$(NC)"
+	@echo "  $(GREEN)deploy$(NC)          Zero-downtime deployment"
+	@echo "  $(GREEN)backup$(NC)          Backup all data and configs"
+	@echo "  $(GREEN)restore$(NC)         Restore from backup"
+	@echo "  $(GREEN)clean$(NC)           Remove all data (destructive!)"
+	@echo ""
+	@echo "$(YELLOW)Development:$(NC)"
+	@echo "  $(GREEN)up-seq$(NC)          Start with Seq (for .NET)"
+	@echo "  $(GREEN)validate$(NC)        Validate configurations"
+	@echo "  $(GREEN)pull$(NC)            Pull latest images"
+	@echo "  $(GREEN)logs-collector$(NC)  View collector logs"
 	@echo ""
 	@echo "$(YELLOW)Quick Start:$(NC)"
 	@echo "  make up        # Start everything"
 	@echo "  make status    # Check if services are healthy"
 	@echo "  make down      # Stop everything"
 	@echo ""
+
+# =============================================================================
+# Core Commands
+# =============================================================================
 
 ## up: Start the observability stack
 up:
@@ -116,6 +136,51 @@ logs-collector:
 logs-jaeger:
 	@docker compose logs -f jaeger
 
+## logs-loki: View Loki logs
+logs-loki:
+	@docker compose logs -f loki
+
+## logs-prometheus: View Prometheus logs
+logs-prometheus:
+	@docker compose logs -f prometheus
+
+# =============================================================================
+# Operations Commands
+# =============================================================================
+
+## deploy: Zero-downtime deployment
+deploy:
+	@./scripts/deploy.sh
+
+## deploy-quick: Quick deployment (skip backup)
+deploy-quick:
+	@./scripts/deploy.sh --quick
+
+## deploy-pull: Deploy with image updates
+deploy-pull:
+	@./scripts/deploy.sh --pull
+
+## backup: Backup all data and configurations
+backup:
+	@./scripts/backup.sh
+
+## restore: Restore from backup (interactive)
+restore:
+	@echo "$(YELLOW)Available backups:$(NC)"
+	@ls -1 ./backups/ 2>/dev/null || echo "  No backups found"
+	@echo ""
+	@echo "Usage: ./scripts/restore.sh <backup_path>"
+	@echo "Example: ./scripts/restore.sh ./backups/20260122_020000"
+
+## restore-latest: Restore from most recent backup
+restore-latest:
+	@latest=$$(ls -1t ./backups/ 2>/dev/null | head -1); \
+	if [ -n "$$latest" ]; then \
+		./scripts/restore.sh "./backups/$$latest" --force; \
+	else \
+		echo "$(RED)No backups found$(NC)"; \
+	fi
+
 ## clean: Stop services and remove all data volumes
 clean:
 	@echo "$(RED)WARNING: This will delete all stored data!$(NC)"
@@ -124,9 +189,17 @@ clean:
 	@docker compose --profile full down -v
 	@echo "$(GREEN)✓ All data removed$(NC)"
 
+# =============================================================================
+# Development Commands
+# =============================================================================
+
 ## shell-collector: Open shell in OTel Collector container
 shell-collector:
 	@docker compose exec otel-collector sh
+
+## shell-prometheus: Open shell in Prometheus container
+shell-prometheus:
+	@docker compose exec prometheus sh
 
 ## validate: Validate configuration files
 validate:
@@ -142,3 +215,22 @@ pull:
 
 ## update: Pull latest images and restart
 update: pull restart
+
+## alerts: View active Prometheus alerts
+alerts:
+	@echo "$(BLUE)Active Alerts:$(NC)"
+	@curl -s http://localhost:9090/api/v1/alerts | jq -r '.data.alerts[] | "\(.labels.alertname): \(.annotations.summary)"' 2>/dev/null || \
+		echo "  Unable to fetch alerts (is Prometheus running?)"
+
+## metrics: Show collector throughput metrics
+metrics:
+	@echo "$(BLUE)Collector Throughput:$(NC)"
+	@echo ""
+	@echo "Spans received (last 5m):"
+	@curl -s 'http://localhost:9090/api/v1/query?query=rate(otelcol_receiver_accepted_spans[5m])' | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "  N/A"
+	@echo ""
+	@echo "Metrics received (last 5m):"
+	@curl -s 'http://localhost:9090/api/v1/query?query=rate(otelcol_receiver_accepted_metric_points[5m])' | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "  N/A"
+	@echo ""
+	@echo "Logs received (last 5m):"
+	@curl -s 'http://localhost:9090/api/v1/query?query=rate(otelcol_receiver_accepted_log_records[5m])' | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "  N/A"

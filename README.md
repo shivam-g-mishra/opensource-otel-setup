@@ -1,6 +1,6 @@
 # OpenTelemetry Observability Stack
 
-A production-ready observability infrastructure for any application. Get distributed tracing, metrics, and logging in minutes.
+A production-ready, reliable observability infrastructure for any application. Get distributed tracing, metrics, and logging in minutes.
 
 ## Quick Start
 
@@ -99,22 +99,78 @@ exporter, _ := otlptracegrpc.New(ctx,
 
 **Full integration guides:** [.NET](docs/dotnet-integration.md) | [Node.js](docs/nodejs-integration.md) | [Python](docs/python-integration.md) | [Go](docs/go-integration.md)
 
-## Common Commands
+## Commands
+
+### Core Commands
 
 ```bash
 make up          # Start the stack
-make down        # Stop the stack
+make down        # Stop the stack (data preserved)
+make restart     # Restart all services
 make status      # Check service health
 make logs        # View all logs
-make clean       # Remove all data
-make help        # Show all commands
 ```
 
-Or use Docker Compose directly:
+### Operations
+
 ```bash
-docker compose up -d      # Start
-docker compose down       # Stop
-docker compose logs -f    # View logs
+make deploy      # Zero-downtime deployment
+make backup      # Backup all data and configs
+make restore     # Restore from backup
+make clean       # Remove all data (destructive!)
+```
+
+### Development
+
+```bash
+make up-seq      # Start with Seq (for .NET)
+make validate    # Validate configurations
+make pull        # Pull latest images
+make alerts      # View active alerts
+make metrics     # Show collector throughput
+```
+
+Run `make help` for all available commands.
+
+## Reliability Features
+
+This stack is built for production reliability:
+
+| Feature | Description |
+|---------|-------------|
+| **Persistent Queues** | Data survives collector restarts |
+| **Resource Limits** | Prevents OOM crashes, isolates services |
+| **Health Checks** | Auto-restart unhealthy containers |
+| **Graceful Shutdown** | Zero data loss during deployments |
+| **Retry Policies** | Exponential backoff for transient failures |
+| **Automated Backups** | Scripts for backup and restore |
+| **Self-Monitoring** | 20+ alerting rules included |
+
+### Backup & Restore
+
+```bash
+# Create backup
+make backup
+# Backups stored in ./backups/YYYYMMDD_HHMMSS/
+
+# Restore from backup
+./scripts/restore.sh ./backups/20260122_020000
+
+# Automated backups (add to cron)
+0 2 * * * /path/to/scripts/backup.sh
+```
+
+### Zero-Downtime Deployment
+
+```bash
+# Standard deployment (includes backup)
+make deploy
+
+# Quick deployment (skip backup)
+make deploy-quick
+
+# Deploy with image updates
+make deploy-pull
 ```
 
 ## Configuration
@@ -122,7 +178,6 @@ docker compose logs -f    # View logs
 Create a `.env` file to customize settings:
 
 ```bash
-# Copy example config
 cp env.example .env
 ```
 
@@ -135,14 +190,17 @@ cp env.example .env
 | `LOGS_RETENTION` | 720h (30d) | How long to keep logs |
 | `GRAFANA_ADMIN_PASSWORD` | admin | Grafana admin password |
 
-### Optional: Include Seq for .NET
+### Resource Limits (Pre-configured)
 
-```bash
-make up-seq
-# Seq UI: http://localhost:5380
-```
+| Service | CPU | Memory |
+|---------|-----|--------|
+| OTel Collector | 2 cores | 2 GB |
+| Prometheus | 2 cores | 4 GB |
+| Jaeger | 2 cores | 4 GB |
+| Loki | 1 core | 2 GB |
+| Grafana | 1 core | 1 GB |
 
-## What's Included
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -152,13 +210,14 @@ make up-seq
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    OTel Collector                            │
-│         (receives, processes, exports telemetry)             │
+│    [Persistent Queues] [Memory Limiter] [Retry Policies]    │
 └────────────┬─────────────────┬─────────────────┬────────────┘
              │                 │                 │
              ▼                 ▼                 ▼
       ┌──────────┐      ┌──────────┐      ┌──────────┐
       │  Jaeger  │      │Prometheus│      │   Loki   │
       │ (traces) │      │(metrics) │      │  (logs)  │
+      │ [Badger] │      │  [TSDB]  │      │  [TSDB]  │
       └────┬─────┘      └────┬─────┘      └────┬─────┘
            └─────────────────┼─────────────────┘
                              ▼
@@ -168,19 +227,22 @@ make up-seq
                       └──────────┘
 ```
 
-### Pre-built Dashboards
+## Pre-built Dashboards
 
 Grafana includes auto-provisioned dashboards:
 - **OpenTelemetry Collector** - Collector health & throughput
 - **Application Metrics** - RED metrics (Rate, Errors, Duration)
 
-### Fault Tolerance
+## Alerting
 
-- **Memory limiter** - Prevents OOM crashes
-- **Retry on failure** - Auto-retries with exponential backoff
-- **Sending queues** - Buffers data during backend outages
-- **Persistent storage** - Data survives restarts
-- **Health checks** - All services monitored
+20+ pre-configured alerts monitor the stack:
+
+- **Collector alerts**: Down, high memory, queue filling, dropping data
+- **Prometheus alerts**: Down, high memory, storage filling
+- **Loki alerts**: Down, ingestion errors
+- **Jaeger alerts**: Down, storage high
+
+View alerts: `make alerts` or visit http://localhost:9090/alerts
 
 ## Project Structure
 
@@ -189,10 +251,18 @@ opensource-otel-setup/
 ├── Makefile                    # Easy commands (make help)
 ├── docker-compose.yml          # Service definitions
 ├── otel-collector-config.yaml  # Collector pipelines
-├── prometheus/prometheus.yml   # Metrics scraping
+├── prometheus/
+│   ├── prometheus.yml          # Metrics scraping
+│   └── alerts/                 # Alerting rules
 ├── loki/loki-config.yaml       # Log aggregation
 ├── grafana/provisioning/       # Dashboards & datasources
-├── scripts/                    # Shell scripts
+├── scripts/
+│   ├── start.sh               # Start script
+│   ├── stop.sh                # Stop script
+│   ├── status.sh              # Health check
+│   ├── backup.sh              # Backup data
+│   ├── restore.sh             # Restore data
+│   └── deploy.sh              # Zero-downtime deploy
 ├── docs/                       # Integration guides
 └── env.example                 # Configuration template
 ```
@@ -204,14 +274,26 @@ opensource-otel-setup/
 | Collector health | http://localhost:13133/health |
 | Collector debug | http://localhost:55679/debug/tracez |
 | Prometheus targets | http://localhost:9090/targets |
+| Prometheus alerts | http://localhost:9090/alerts |
 
-## Production Considerations
+## Production Checklist
 
-1. **Change default passwords** - Update `GRAFANA_ADMIN_PASSWORD`
-2. **Configure retention** - Set appropriate `*_RETENTION` values
-3. **Enable TLS** - Secure OTLP endpoints for external access
-4. **Resource limits** - Add CPU/memory limits in docker-compose
-5. **Backup volumes** - Backup data directories regularly
+- [ ] Change `GRAFANA_ADMIN_PASSWORD` in `.env`
+- [ ] Configure retention settings for your needs
+- [ ] Set up automated backups (`make backup` in cron)
+- [ ] Review and customize alerting rules
+- [ ] Enable TLS for external OTLP endpoints
+- [ ] Monitor disk usage (alerts pre-configured)
+- [ ] Test restore procedure (`make restore`)
+
+## Scaling Guide
+
+This single-node setup handles:
+- ~50K spans/second
+- ~500K active metric series
+- ~100MB/s log ingestion
+
+For larger workloads, see [Architecture Proposal](tmp/scalable-architecture-proposal.md) for horizontal scaling with Kafka, Kubernetes, and distributed storage.
 
 ## License
 

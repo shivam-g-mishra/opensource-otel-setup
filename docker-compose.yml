@@ -1,17 +1,18 @@
 # =============================================================================
 # OpenTelemetry Observability Stack
 # =============================================================================
-# A production-ready observability infrastructure for any application.
+# A production-ready observability infrastructure with reliability features:
+#   - Persistent queues (no data loss on restart)
+#   - Resource limits (prevents OOM)
+#   - Health checks with auto-restart
+#   - Graceful shutdown
+#   - Proper startup ordering
 #
 # Quick Start:
 #   make up              # Start the stack
 #   make down            # Stop the stack
 #   make status          # Check health
 #   make help            # Show all commands
-#
-# Or use Docker Compose directly:
-#   docker compose up -d
-#   docker compose --profile seq up -d  # Include Seq for .NET apps
 #
 # Access UIs:
 #   Grafana:    http://localhost:3000 (admin/admin)
@@ -51,11 +52,21 @@ services:
     networks:
       - observability
     restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # ===========================================
   # Prometheus - Metrics Collection
@@ -65,14 +76,17 @@ services:
     container_name: otel-prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts:/etc/prometheus/alerts:ro
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=${METRICS_RETENTION:-30d}'
+      - '--storage.tsdb.wal-compression'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
     extra_hosts:
@@ -80,11 +94,97 @@ services:
     networks:
       - observability
     restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ===========================================
+  # Loki - Log Aggregation
+  # ===========================================
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: otel-loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    environment:
+      - LOGS_RETENTION=${LOGS_RETENTION:-720h}
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/loki-config.yaml -config.expand-env=true
+    networks:
+      - observability
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================
+  # OpenTelemetry Collector - Unified Pipeline
+  # ===========================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+      - otel-collector-data:/var/lib/otelcol
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"   # OTLP gRPC receiver
+      - "${OTEL_HTTP_PORT:-4318}:4318"   # OTLP HTTP receiver
+      - "8888:8888"                       # Prometheus metrics (self)
+      - "8889:8889"                       # Prometheus exporter
+      - "13133:13133"                     # Health check
+      - "55679:55679"                     # ZPages (debug)
+    networks:
+      - observability
+    depends_on:
+      jaeger:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # ===========================================
   # Grafana - Dashboards & Visualization
@@ -106,15 +206,28 @@ services:
     networks:
       - observability
     depends_on:
-      - prometheus
-      - jaeger
-      - loki
+      prometheus:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ===========================================
   # Seq - Structured Logging (Optional)
@@ -137,58 +250,15 @@ services:
     networks:
       - observability
     restart: unless-stopped
-
-  # ===========================================
-  # Loki - Log Aggregation
-  # ===========================================
-  loki:
-    image: grafana/loki:2.9.0
-    container_name: otel-loki
-    ports:
-      - "${LOKI_PORT:-3100}:3100"
-    environment:
-      - LOGS_RETENTION=${LOGS_RETENTION:-720h}
-    volumes:
-      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
-      - loki-data:/loki
-    command: -config.file=/etc/loki/loki-config.yaml -config.expand-env=true
-    networks:
-      - observability
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # ===========================================
-  # OpenTelemetry Collector - Unified Pipeline
-  # ===========================================
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.91.0
-    container_name: otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
-    ports:
-      - "${OTEL_GRPC_PORT:-4317}:4317"   # OTLP gRPC receiver
-      - "${OTEL_HTTP_PORT:-4318}:4318"   # OTLP HTTP receiver
-      - "8888:8888"                       # Prometheus metrics (self)
-      - "8889:8889"                       # Prometheus exporter
-      - "13133:13133"                     # Health check
-      - "55679:55679"                     # ZPages (debug)
-    networks:
-      - observability
-    depends_on:
-      - jaeger
-      - prometheus
-      - loki
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
 
 networks:
   observability:
@@ -205,4 +275,6 @@ volumes:
   loki-data:
     driver: local
   jaeger-data:
+    driver: local
+  otel-collector-data:
     driver: local
