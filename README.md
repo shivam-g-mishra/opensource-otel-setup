@@ -320,7 +320,7 @@ This single-node setup handles:
 - ~500K active metric series
 - ~100MB/s log ingestion
 
-For larger workloads, see [Architecture Proposal](tmp/scalable-architecture-proposal.md) for horizontal scaling with Kafka, Kubernetes, and distributed storage.
+For larger workloads, see [Architecture Proposal](docs/scalable-architecture-proposal.md) for horizontal scaling with Kafka, Kubernetes, and distributed storage.
 
 ## License
 
