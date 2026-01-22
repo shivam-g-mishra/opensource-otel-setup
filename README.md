@@ -1,274 +1,222 @@
-# 🔭 OpenTelemetry Observability Stack
+# OpenTelemetry Observability Stack
 
-A **production-ready**, **reusable** observability infrastructure using OpenTelemetry. Drop this into any project to get distributed tracing, metrics, and logging in minutes.
+A production-ready observability infrastructure for any application. Get distributed tracing, metrics, and logging in minutes.
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-# Clone the repo
+# Clone and start
 git clone https://github.com/shivam-g-mishra/opensource-otel-setup.git
 cd opensource-otel-setup
-
-# Start the stack
-./scripts/start.sh
-
-# Or with Docker Compose directly
-docker compose up -d
+make up
 ```
 
-**That's it!** Open:
-- 📊 **Jaeger** (Traces): http://localhost:16686
-- 📈 **Grafana** (Dashboards): http://localhost:3000 (admin/admin)
-- 🔍 **Prometheus** (Metrics): http://localhost:9090
-- 📜 **Loki** (Logs): http://localhost:3100
+**That's it!** Your observability stack is running:
 
-## 📦 What's Included
+| Service | URL | Purpose |
+|---------|-----|---------|
+| **Grafana** | http://localhost:3000 | Dashboards (admin/admin) |
+| **Jaeger** | http://localhost:16686 | Trace explorer |
+| **Prometheus** | http://localhost:9090 | Metrics |
 
-| Service | Purpose | Port |
-|---------|---------|------|
-| **Jaeger** | Distributed tracing | 16686 |
-| **Prometheus** | Metrics collection & storage | 9090 |
-| **Loki** | Log aggregation | 3100 |
-| **Grafana** | Dashboards & visualization | 3000 |
-| **OTel Collector** | Unified telemetry pipeline | 4317 (gRPC), 4318 (HTTP) |
-| **Seq** (optional) | Structured logging for .NET | 5380 |
+## Connect Your Application
 
-## 🔧 Connect Your Application
-
-### Send telemetry to:
+Send telemetry data to:
 - **OTLP gRPC**: `localhost:4317` (recommended)
-- **OTLP HTTP**: `localhost:4318` (for browsers)
+- **OTLP HTTP**: `localhost:4318`
 
-### .NET Example
+### Quick Examples
+
+<details>
+<summary><b>.NET</b></summary>
+
+```bash
+dotnet add package OpenTelemetry.Extensions.Hosting
+dotnet add package OpenTelemetry.Exporter.OpenTelemetryProtocol
+```
 
 ```csharp
-// Program.cs
 builder.Services.AddOpenTelemetry()
-    .WithTracing(tracing => tracing
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddOtlpExporter(opts => opts.Endpoint = new Uri("http://localhost:4317")))
-    .WithMetrics(metrics => metrics
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddOtlpExporter(opts => opts.Endpoint = new Uri("http://localhost:4317")));
+    .WithTracing(t => t.AddAspNetCoreInstrumentation()
+        .AddOtlpExporter(o => o.Endpoint = new Uri("http://localhost:4317")))
+    .WithMetrics(m => m.AddAspNetCoreInstrumentation()
+        .AddOtlpExporter(o => o.Endpoint = new Uri("http://localhost:4317")));
 ```
+</details>
 
-### Node.js Example
+<details>
+<summary><b>Node.js</b></summary>
+
+```bash
+npm install @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node \
+            @opentelemetry/exporter-trace-otlp-grpc
+```
 
 ```javascript
 const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
 const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-grpc');
-const { OTLPMetricExporter } = require('@opentelemetry/exporter-metrics-otlp-grpc');
 
 const sdk = new NodeSDK({
   traceExporter: new OTLPTraceExporter({ url: 'http://localhost:4317' }),
-  metricReader: new PeriodicExportingMetricReader({
-    exporter: new OTLPMetricExporter({ url: 'http://localhost:4317' }),
-  }),
+  instrumentations: [getNodeAutoInstrumentations()],
 });
-
 sdk.start();
 ```
+</details>
 
-### Python Example
+<details>
+<summary><b>Python</b></summary>
 
-```python
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-trace.set_tracer_provider(TracerProvider())
-otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
-trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
+```bash
+pip install opentelemetry-distro opentelemetry-exporter-otlp
+opentelemetry-bootstrap -a install
 ```
 
-### Go Example
+```bash
+# Run with auto-instrumentation
+opentelemetry-instrument --service_name my-service \
+    --exporter_otlp_endpoint http://localhost:4317 \
+    python app.py
+```
+</details>
+
+<details>
+<summary><b>Go</b></summary>
+
+```bash
+go get go.opentelemetry.io/otel \
+       go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc
+```
 
 ```go
-import (
-    "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-)
-
 exporter, _ := otlptracegrpc.New(ctx,
     otlptracegrpc.WithEndpoint("localhost:4317"),
     otlptracegrpc.WithInsecure(),
 )
 ```
+</details>
 
-### Detailed Integration Guides
+**Full integration guides:** [.NET](docs/dotnet-integration.md) | [Node.js](docs/nodejs-integration.md) | [Python](docs/python-integration.md) | [Go](docs/go-integration.md)
 
-For comprehensive setup instructions with custom spans, metrics, and logging:
+## Common Commands
 
-- [.NET Integration Guide](docs/dotnet-integration.md)
-- [Node.js Integration Guide](docs/nodejs-integration.md)
-- [Python Integration Guide](docs/python-integration.md)
-- [Go Integration Guide](docs/go-integration.md)
+```bash
+make up          # Start the stack
+make down        # Stop the stack
+make status      # Check service health
+make logs        # View all logs
+make clean       # Remove all data
+make help        # Show all commands
+```
 
-## 📁 Project Structure
+Or use Docker Compose directly:
+```bash
+docker compose up -d      # Start
+docker compose down       # Stop
+docker compose logs -f    # View logs
+```
+
+## Configuration
+
+Create a `.env` file to customize settings:
+
+```bash
+# Copy example config
+cp env.example .env
+```
+
+### Key Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRACES_RETENTION` | 720h (30d) | How long to keep traces |
+| `METRICS_RETENTION` | 30d | How long to keep metrics |
+| `LOGS_RETENTION` | 720h (30d) | How long to keep logs |
+| `GRAFANA_ADMIN_PASSWORD` | admin | Grafana admin password |
+
+### Optional: Include Seq for .NET
+
+```bash
+make up-seq
+# Seq UI: http://localhost:5380
+```
+
+## What's Included
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Your Application                         │
+└─────────────────────────────┬───────────────────────────────┘
+                              │ OTLP (gRPC :4317 / HTTP :4318)
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    OTel Collector                            │
+│         (receives, processes, exports telemetry)             │
+└────────────┬─────────────────┬─────────────────┬────────────┘
+             │                 │                 │
+             ▼                 ▼                 ▼
+      ┌──────────┐      ┌──────────┐      ┌──────────┐
+      │  Jaeger  │      │Prometheus│      │   Loki   │
+      │ (traces) │      │(metrics) │      │  (logs)  │
+      └────┬─────┘      └────┬─────┘      └────┬─────┘
+           └─────────────────┼─────────────────┘
+                             ▼
+                      ┌──────────┐
+                      │ Grafana  │
+                      │(dashboards)│
+                      └──────────┘
+```
+
+### Pre-built Dashboards
+
+Grafana includes auto-provisioned dashboards:
+- **OpenTelemetry Collector** - Collector health & throughput
+- **Application Metrics** - RED metrics (Rate, Errors, Duration)
+
+### Fault Tolerance
+
+- **Memory limiter** - Prevents OOM crashes
+- **Retry on failure** - Auto-retries with exponential backoff
+- **Sending queues** - Buffers data during backend outages
+- **Persistent storage** - Data survives restarts
+- **Health checks** - All services monitored
+
+## Project Structure
 
 ```
 opensource-otel-setup/
-├── docker-compose.yml          # Main compose file
-├── otel-collector-config.yaml  # OTel Collector configuration
-├── prometheus/
-│   └── prometheus.yml          # Prometheus scrape configs
-├── loki/
-│   └── loki-config.yaml        # Loki log aggregation config
-├── grafana/
-│   └── provisioning/
-│       ├── datasources/        # Auto-configured datasources
-│       └── dashboards/         # Pre-built dashboards
-├── scripts/
-│   ├── start.sh               # Start the stack
-│   ├── stop.sh                # Stop the stack
-│   └── status.sh              # Check health status
-└── docs/                      # Integration guides
+├── Makefile                    # Easy commands (make help)
+├── docker-compose.yml          # Service definitions
+├── otel-collector-config.yaml  # Collector pipelines
+├── prometheus/prometheus.yml   # Metrics scraping
+├── loki/loki-config.yaml       # Log aggregation
+├── grafana/provisioning/       # Dashboards & datasources
+├── scripts/                    # Shell scripts
+├── docs/                       # Integration guides
+└── env.example                 # Configuration template
 ```
 
-## ⚙️ Configuration
+## Debug Endpoints
 
-### Environment Variables
+| Endpoint | URL |
+|----------|-----|
+| Collector health | http://localhost:13133/health |
+| Collector debug | http://localhost:55679/debug/tracez |
+| Prometheus targets | http://localhost:9090/targets |
 
-Create a `.env` file to customize:
+## Production Considerations
 
-```bash
-# Ports
-JAEGER_UI_PORT=16686
-PROMETHEUS_PORT=9090
-GRAFANA_PORT=3000
-OTEL_GRPC_PORT=4317
-OTEL_HTTP_PORT=4318
+1. **Change default passwords** - Update `GRAFANA_ADMIN_PASSWORD`
+2. **Configure retention** - Set appropriate `*_RETENTION` values
+3. **Enable TLS** - Secure OTLP endpoints for external access
+4. **Resource limits** - Add CPU/memory limits in docker-compose
+5. **Backup volumes** - Backup data directories regularly
 
-# Grafana
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=admin
+## License
 
-# Data Retention (default: 30 days for all)
-TRACES_RETENTION=720h    # Jaeger traces (Go duration: 720h = 30 days)
-METRICS_RETENTION=30d    # Prometheus metrics
-LOGS_RETENTION=720h      # Loki logs (Go duration: 720h = 30 days)
+MIT License - use freely in your projects.
 
-# Service metadata (added to all telemetry)
-SERVICE_NAMESPACE=my-company
-DEPLOYMENT_ENV=production
-```
+## Contributing
 
-### Data Retention
-
-All telemetry data has configurable retention with a **default of 30 days**:
-
-| Data Type | Variable | Default | Format | Example Values |
-|-----------|----------|---------|--------|----------------|
-| **Traces** | `TRACES_RETENTION` | 720h | Go duration | `168h` (7d), `720h` (30d), `2160h` (90d) |
-| **Metrics** | `METRICS_RETENTION` | 30d | Prometheus duration | `7d`, `30d`, `90d` |
-| **Logs** | `LOGS_RETENTION` | 720h | Go duration | `168h` (7d), `720h` (30d), `2160h` (90d) |
-
-**Storage Notes:**
-- Traces are stored in Jaeger's Badger database (persistent)
-- Metrics are stored in Prometheus TSDB
-- Logs are stored in Loki's filesystem storage
-
-### Include Seq (for .NET apps)
-
-```bash
-# Start with Seq
-./scripts/start.sh --seq
-
-# Or
-docker compose --profile seq up -d
-```
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Your Applications                              │
-│            (.NET, Node.js, Python, Go, Java, etc.)                      │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ OTLP (gRPC/HTTP)
-                                     │ Traces, Metrics, Logs
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          OTel Collector                                  │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────────────┐          │
-│  │ Receivers│───▶│  Processors  │───▶│      Exporters       │          │
-│  │  (OTLP)  │    │ (batch,mem)  │    │ (jaeger,prom,loki)   │          │
-│  └──────────┘    └──────────────┘    └──────────┬───────────┘          │
-└─────────────────────────────────────────────────┼───────────────────────┘
-              ┌───────────────────────────────────┼───────────────────────┐
-              │                                   │                       │
-              ▼                                   ▼                       ▼
- ┌─────────────────────┐         ┌─────────────────────┐    ┌─────────────────────┐
- │       Jaeger        │         │     Prometheus      │    │        Loki         │
- │      (Traces)       │         │      (Metrics)      │    │       (Logs)        │
- └──────────┬──────────┘         └──────────┬──────────┘    └──────────┬──────────┘
-            │                               │                          │
-            └───────────────────────────────┼──────────────────────────┘
-                                            │
-                                            ▼
-                               ┌─────────────────────┐
-                               │      Grafana        │
-                               │   (Dashboards)      │
-                               │ Trace↔Log linking   │
-                               └─────────────────────┘
-```
-
-## 🛡️ Fault Tolerance & Persistence
-
-The stack includes fault tolerance and persistent storage:
-
-| Feature | Description |
-|---------|-------------|
-| **Memory Limiter** | Prevents OOM crashes (512MB limit) |
-| **Retry on Failure** | Auto-retries failed exports (5s → 30s backoff) |
-| **Sending Queue** | Buffers 5000 items during outages |
-| **Health Checks** | All services have health endpoints |
-| **Persistent Storage** | All data survives container restarts |
-| **Configurable Retention** | Default 30 days for traces, metrics, and logs |
-
-## 🔍 Debug Endpoints
-
-| Endpoint | URL | Purpose |
-|----------|-----|---------|
-| Collector Health | http://localhost:13133/health | Liveness check |
-| Collector ZPages | http://localhost:55679/debug/tracez | Debug traces |
-| Collector Metrics | http://localhost:8889/metrics | Self-monitoring |
-| Prometheus | http://localhost:9090/targets | Scrape targets |
-| Loki Ready | http://localhost:3100/ready | Loki readiness |
-| Loki Metrics | http://localhost:3100/metrics | Loki self-monitoring |
-
-## 📊 Pre-built Dashboards
-
-Grafana comes with auto-provisioned datasources and dashboards:
-
-**Datasources:**
-- **Prometheus** - for metrics queries
-- **Jaeger** - for trace exploration (with trace-to-logs linking)
-- **Loki** - for log queries (with log-to-trace linking)
-
-**Included Dashboards:**
-- **OpenTelemetry Collector** - Monitor collector health, throughput, and queue sizes
-- **Application Metrics** - RED metrics (Rate, Errors, Duration) for your services
-
-Import additional community dashboards from [Grafana.com](https://grafana.com/grafana/dashboards/).
-
-## 🚀 Production Deployment
-
-For production, consider:
-
-1. **Persistent storage**: Mount volumes for data retention
-2. **Authentication**: Enable auth on Grafana, Jaeger
-3. **TLS**: Secure OTLP endpoints
-4. **High Availability**: Run multiple collector instances
-5. **Alerting**: Configure Prometheus AlertManager
-
-## 📝 License
-
-MIT License - feel free to use in your projects!
-
-## 🤝 Contributing
-
-Contributions welcome! Please open an issue or PR.
+Issues and PRs welcome!

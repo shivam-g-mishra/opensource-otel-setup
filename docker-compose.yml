@@ -1,24 +1,27 @@
+# =============================================================================
 # OpenTelemetry Observability Stack
-# A reusable observability infrastructure for any application
+# =============================================================================
+# A production-ready observability infrastructure for any application.
 #
-# Services:
-#   - Jaeger: Distributed tracing
-#   - Prometheus: Metrics collection
-#   - Grafana: Dashboards & visualization
-#   - Seq: Structured logging (optional, great for .NET)
-#   - OTel Collector: Unified telemetry pipeline
+# Quick Start:
+#   make up              # Start the stack
+#   make down            # Stop the stack
+#   make status          # Check health
+#   make help            # Show all commands
 #
-# Usage:
+# Or use Docker Compose directly:
 #   docker compose up -d
 #   docker compose --profile seq up -d  # Include Seq for .NET apps
 #
-# Ports:
-#   - 16686: Jaeger UI
-#   - 9090:  Prometheus UI
-#   - 3000:  Grafana UI (admin/admin)
-#   - 5380:  Seq UI (optional)
-#   - 4317:  OTLP gRPC (for your app)
-#   - 4318:  OTLP HTTP (for your app)
+# Access UIs:
+#   Grafana:    http://localhost:3000 (admin/admin)
+#   Jaeger:     http://localhost:16686
+#   Prometheus: http://localhost:9090
+#
+# Send telemetry to:
+#   OTLP gRPC: localhost:4317
+#   OTLP HTTP: localhost:4318
+# =============================================================================
 
 services:
   # ===========================================
@@ -105,6 +108,7 @@ services:
     depends_on:
       - prometheus
       - jaeger
+      - loki
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
