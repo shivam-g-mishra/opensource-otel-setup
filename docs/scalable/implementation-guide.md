@@ -87,31 +87,31 @@ When to move:        When to move:          When to move:
 This phase deploys everything on a single server using Docker Compose:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Your Server                                 │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │               OpenTelemetry Collector                       │ │
-│  │                                                             │ │
-│  │  Receives OTLP → Queues to disk → Exports to backends      │ │
-│  │        ↓              ↓                  ↓                  │ │
-│  │     (4317)        (survives           (retries             │ │
-│  │     (4318)         restart)           on failure)          │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              │                                   │
-│              ┌───────────────┼───────────────┐                  │
-│              ▼               ▼               ▼                  │
-│         ┌─────────┐    ┌──────────┐    ┌─────────┐             │
-│         │ Jaeger  │    │Prometheus│    │  Loki   │             │
-│         │ Traces  │    │ Metrics  │    │  Logs   │             │
-│         └────┬────┘    └────┬─────┘    └────┬────┘             │
-│              └───────────────┼───────────────┘                  │
-│                              ▼                                   │
-│                       ┌──────────┐                              │
-│                       │ Grafana  │                              │
-│                       │   :3000  │                              │
-│                       └──────────┘                              │
-└─────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                         Your Server                               │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │               OpenTelemetry Collector                       │  │
+│  │                                                             │  │
+│  │  Receives OTLP → Queues to disk → Exports to backends       │  │
+│  │        ↓              ↓                  ↓                  │  │
+│  │     (4317)        (survives           (retries              │  │
+│  │     (4318)         restart)           on failure)           │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                    │
+│              ┌───────────────┼───────────────┐                    │
+│              ▼               ▼               ▼                    │
+│         ┌─────────┐    ┌──────────┐    ┌─────────┐                │
+│         │ Jaeger  │    │Prometheus│    │  Loki   │                │
+│         │ Traces  │    │ Metrics  │    │  Logs   │                │
+│         └────┬────┘    └────┬─────┘    └────┬────┘                │
+│              └───────────────┼───────────────┘                    │
+│                              ▼                                    │
+│                       ┌──────────┐                                │
+│                       │ Grafana  │                                │
+│                       │   :3000  │                                │
+│                       └──────────┘                                │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 This setup is production-ready for many use cases. It includes persistent queues (data survives restarts), health checks (automatic recovery), and resource limits (predictable behavior under load).
