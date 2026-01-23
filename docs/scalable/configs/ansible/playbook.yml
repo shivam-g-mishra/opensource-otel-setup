@@ -1,0 +1,370 @@
+# Ansible Playbook for Observability Stack Deployment
+#
+# Deploys the OpenTelemetry observability stack using Docker Compose
+#
+# Usage:
+#   # Single node deployment
+#   ansible-playbook -i inventory playbook.yml
+#
+#   # Scalable deployment with Kafka
+#   ansible-playbook -i inventory playbook.yml -e deployment_type=scalable
+#
+#   # Dry run
+#   ansible-playbook -i inventory playbook.yml --check
+
+---
+- name: Deploy Observability Stack
+  hosts: observability
+  become: yes
+  vars:
+    # Deployment configuration
+    deployment_type: "{{ deployment_type | default('single') }}"
+    install_dir: /opt/observability
+    
+    # Docker configuration
+    docker_compose_version: "{{ docker_compose_version | default('2.23.0') }}"
+    
+    # Stack versions
+    otel_collector_version: "{{ otel_collector_version | default('0.91.0') }}"
+    grafana_version: "10.2.3"
+    prometheus_version: "2.48.0"
+    loki_version: "2.9.3"
+    tempo_version: "2.3.0"
+    mimir_version: "2.11.0"
+    
+    # Credentials
+    grafana_admin_password: "{{ grafana_admin_password | default('admin') }}"
+    
+    # Retention settings
+    prometheus_retention: "{{ prometheus_retention | default('7d') }}"
+    
+  tasks:
+    # =========================================================================
+    # Prerequisites
+    # =========================================================================
+    
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+    
+    - name: Install required packages
+      package:
+        name:
+          - curl
+          - git
+          - python3-pip
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+    
+    # =========================================================================
+    # Docker Installation
+    # =========================================================================
+    
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_installed
+      ignore_errors: yes
+      changed_when: false
+    
+    - name: Install Docker (Debian/Ubuntu)
+      when: 
+        - docker_installed.rc != 0
+        - ansible_os_family == "Debian"
+      block:
+        - name: Add Docker GPG key
+          apt_key:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            state: present
+        
+        - name: Add Docker repository
+          apt_repository:
+            repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+            state: present
+        
+        - name: Install Docker packages
+          apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-compose-plugin
+            state: present
+            update_cache: yes
+    
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+    
+    # =========================================================================
+    # Directory Setup
+    # =========================================================================
+    
+    - name: Create installation directory
+      file:
+        path: "{{ install_dir }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Create subdirectories
+      file:
+        path: "{{ install_dir }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - configs
+        - data
+        - logs
+        - backups
+        - grafana/provisioning/datasources
+        - grafana/provisioning/dashboards
+        - prometheus/rules
+    
+    # =========================================================================
+    # Copy Configuration Files
+    # =========================================================================
+    
+    - name: Copy Docker Compose file (single)
+      copy:
+        src: "../docker/docker-compose-single.yaml"
+        dest: "{{ install_dir }}/docker-compose.yaml"
+        mode: '0644'
+      when: deployment_type == 'single'
+    
+    - name: Copy Docker Compose file (scalable)
+      copy:
+        src: "../docker/docker-compose-scalable.yaml"
+        dest: "{{ install_dir }}/docker-compose.yaml"
+        mode: '0644'
+      when: deployment_type == 'scalable'
+    
+    - name: Copy OTel Collector config (single)
+      copy:
+        src: "../docker/otel-collector.yaml"
+        dest: "{{ install_dir }}/otel-collector.yaml"
+        mode: '0644'
+      when: deployment_type == 'single'
+    
+    - name: Copy OTel Gateway config (scalable)
+      copy:
+        src: "../docker/otel-gateway.yaml"
+        dest: "{{ install_dir }}/otel-gateway.yaml"
+        mode: '0644'
+      when: deployment_type == 'scalable'
+    
+    - name: Copy OTel Processor config (scalable)
+      copy:
+        src: "../docker/otel-processor.yaml"
+        dest: "{{ install_dir }}/otel-processor.yaml"
+        mode: '0644'
+      when: deployment_type == 'scalable'
+    
+    - name: Copy HAProxy config (scalable)
+      copy:
+        src: "../docker/haproxy.cfg"
+        dest: "{{ install_dir }}/haproxy.cfg"
+        mode: '0644'
+      when: deployment_type == 'scalable'
+    
+    - name: Copy storage backend configs (scalable)
+      copy:
+        src: "../docker/{{ item }}"
+        dest: "{{ install_dir }}/{{ item }}"
+        mode: '0644'
+      loop:
+        - tempo.yaml
+        - mimir.yaml
+        - mimir-runtime.yaml
+        - loki.yaml
+        - prometheus.yml
+        - alertmanager-fallback.yaml
+      when: deployment_type == 'scalable'
+    
+    - name: Copy Grafana datasources
+      copy:
+        src: "../docker/grafana/provisioning/datasources/datasources.yaml"
+        dest: "{{ install_dir }}/grafana/provisioning/datasources/datasources.yaml"
+        mode: '0644'
+    
+    - name: Copy Grafana dashboards config
+      copy:
+        src: "../docker/grafana/provisioning/dashboards/dashboards.yaml"
+        dest: "{{ install_dir }}/grafana/provisioning/dashboards/dashboards.yaml"
+        mode: '0644'
+    
+    - name: Copy Prometheus alerting rules (scalable)
+      copy:
+        src: "../docker/prometheus/rules/otel-stack-alerts.yml"
+        dest: "{{ install_dir }}/prometheus/rules/otel-stack-alerts.yml"
+        mode: '0644'
+      when: deployment_type == 'scalable'
+    
+    # =========================================================================
+    # Environment Configuration
+    # =========================================================================
+    
+    - name: Create environment file
+      template:
+        src: templates/env.j2
+        dest: "{{ install_dir }}/.env"
+        mode: '0600'
+    
+    # =========================================================================
+    # Deploy Stack
+    # =========================================================================
+    
+    - name: Pull Docker images
+      command: docker compose pull
+      args:
+        chdir: "{{ install_dir }}"
+      register: pull_result
+      changed_when: "'Pulled' in pull_result.stdout or 'Downloaded' in pull_result.stdout"
+    
+    - name: Start observability stack
+      command: docker compose up -d
+      args:
+        chdir: "{{ install_dir }}"
+      register: compose_result
+      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout"
+    
+    # =========================================================================
+    # Health Checks
+    # =========================================================================
+    
+    - name: Wait for Grafana to be ready
+      uri:
+        url: "http://localhost:3000/api/health"
+        status_code: 200
+      register: grafana_health
+      until: grafana_health.status == 200
+      retries: 30
+      delay: 10
+    
+    - name: Wait for Prometheus to be ready (scalable)
+      uri:
+        url: "http://localhost:9090/-/healthy"
+        status_code: 200
+      register: prometheus_health
+      until: prometheus_health.status == 200
+      retries: 20
+      delay: 5
+      when: deployment_type == 'scalable'
+    
+    # =========================================================================
+    # Setup Systemd Service
+    # =========================================================================
+    
+    - name: Create systemd service for observability stack
+      copy:
+        dest: /etc/systemd/system/observability.service
+        content: |
+          [Unit]
+          Description=Observability Stack
+          Requires=docker.service
+          After=docker.service
+          
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          WorkingDirectory={{ install_dir }}
+          ExecStart=/usr/bin/docker compose up -d
+          ExecStop=/usr/bin/docker compose down
+          ExecReload=/usr/bin/docker compose restart
+          
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      notify: Reload systemd
+    
+    - name: Enable observability service
+      systemd:
+        name: observability
+        enabled: yes
+        daemon_reload: yes
+    
+    # =========================================================================
+    # Copy Operational Scripts
+    # =========================================================================
+    
+    - name: Copy backup script
+      copy:
+        src: "../scripts/backup.sh"
+        dest: "{{ install_dir }}/backup.sh"
+        mode: '0755'
+    
+    - name: Copy restore script
+      copy:
+        src: "../scripts/restore.sh"
+        dest: "{{ install_dir }}/restore.sh"
+        mode: '0755'
+    
+    - name: Copy health check script
+      copy:
+        src: "../scripts/health-check.sh"
+        dest: "{{ install_dir }}/health-check.sh"
+        mode: '0755'
+    
+    - name: Setup daily backup cron job
+      cron:
+        name: "Observability backup"
+        hour: "2"
+        minute: "0"
+        job: "{{ install_dir }}/backup.sh >> {{ install_dir }}/logs/backup.log 2>&1"
+        user: root
+    
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+# =============================================================================
+# Post-deployment information
+# =============================================================================
+
+- name: Display deployment information
+  hosts: observability
+  gather_facts: no
+  tasks:
+    - name: Show access information
+      debug:
+        msg: |
+          
+          ============================================
+          Observability Stack Deployed Successfully!
+          ============================================
+          
+          Access URLs:
+            - Grafana:    http://{{ ansible_host }}:3000
+                          Username: admin
+                          Password: {{ grafana_admin_password }}
+          {% if deployment_type == 'scalable' %}
+            - Prometheus: http://{{ ansible_host }}:9090
+            - Tempo:      http://{{ ansible_host }}:3200
+            - Mimir:      http://{{ ansible_host }}:9009
+            - Loki:       http://{{ ansible_host }}:3100
+            - HAProxy:    http://{{ ansible_host }}:8404/stats
+          {% endif %}
+          
+          OTLP Endpoints:
+            - gRPC: {{ ansible_host }}:4317
+            - HTTP: {{ ansible_host }}:4318
+          
+          Management Commands:
+            - Status:  cd {{ install_dir }} && docker compose ps
+            - Logs:    cd {{ install_dir }} && docker compose logs -f
+            - Restart: systemctl restart observability
+            - Stop:    systemctl stop observability
+          
+          ============================================

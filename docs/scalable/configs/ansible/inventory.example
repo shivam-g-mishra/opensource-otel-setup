@@ -1,0 +1,40 @@
+# Ansible Inventory Example for Observability Stack
+#
+# Copy this file to 'inventory' and customize for your environment
+#
+# Usage:
+#   ansible-playbook -i inventory playbook.yml
+
+[observability]
+# Single node deployment
+observability-server ansible_host=192.168.1.100
+
+# Multi-node deployment (uncomment for HA setup)
+# observability-1 ansible_host=192.168.1.101
+# observability-2 ansible_host=192.168.1.102
+# observability-3 ansible_host=192.168.1.103
+
+[observability:vars]
+# SSH Configuration
+ansible_user=ubuntu
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+# ansible_become=yes
+# ansible_become_method=sudo
+
+# Docker Configuration
+docker_compose_version=2.23.0
+otel_collector_version=0.91.0
+
+# Stack Configuration
+grafana_admin_password=admin
+deployment_type=single  # 'single' or 'scalable'
+
+# Resource Limits (for scalable deployment)
+otel_gateway_replicas=2
+otel_processor_replicas=2
+
+# Retention Settings
+prometheus_retention=7d
+tempo_retention_hours=720
+loki_retention_hours=168
+mimir_retention_hours=744

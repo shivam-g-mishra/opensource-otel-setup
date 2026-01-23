@@ -1,0 +1,68 @@
+# Terraform Variables Example
+#
+# Copy this file to terraform.tfvars and customize for your environment
+# Usage: terraform apply -var-file="terraform.tfvars"
+
+# =============================================================================
+# AWS Configuration
+# =============================================================================
+
+aws_region  = "us-west-2"
+environment = "dev"  # dev, staging, or production
+
+# =============================================================================
+# VPC Configuration
+# =============================================================================
+
+vpc_cidr             = "10.0.0.0/16"
+private_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+public_subnet_cidrs  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+# =============================================================================
+# EKS Configuration
+# =============================================================================
+
+cluster_name       = "observability"
+kubernetes_version = "1.28"
+
+# System Node Group (for Kubernetes system components)
+system_node_instance_types = ["t3.medium"]
+system_node_min_size       = 1
+system_node_max_size       = 3
+system_node_desired_size   = 2
+
+# Observability Node Group (for the observability stack)
+# Recommended: t3.xlarge (4 vCPU, 16GB RAM) or larger
+observability_node_instance_types = ["t3.xlarge"]
+observability_node_min_size       = 2
+observability_node_max_size       = 10
+observability_node_desired_size   = 3
+
+# =============================================================================
+# Storage Retention (days)
+# =============================================================================
+
+trace_retention_days   = 30   # Tempo traces
+metrics_retention_days = 90   # Mimir metrics
+logs_retention_days    = 30   # Loki logs
+
+# =============================================================================
+# Production Recommendations
+# =============================================================================
+#
+# For production deployments, consider:
+#
+# 1. Use larger instance types:
+#    observability_node_instance_types = ["r5.xlarge"]  # Memory optimized
+#
+# 2. Increase node counts:
+#    observability_node_min_size    = 3
+#    observability_node_desired_size = 5
+#
+# 3. Use multiple availability zones (already configured)
+#
+# 4. Enable S3 backend for Terraform state:
+#    Uncomment the backend "s3" block in main.tf
+#
+# 5. Consider using Graviton instances for cost savings:
+#    observability_node_instance_types = ["r6g.xlarge"]

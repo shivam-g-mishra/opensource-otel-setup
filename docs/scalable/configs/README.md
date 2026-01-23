@@ -9,6 +9,7 @@ configs/
 ├── docker/                         # Docker Compose deployments
 │   ├── docker-compose-single.yaml  # Phase 1: Single-node setup
 │   ├── docker-compose-scalable.yaml # Phase 2: Multi-node with Kafka
+│   ├── env.example                 # Environment variables template
 │   ├── otel-collector.yaml         # Single collector config
 │   ├── otel-gateway.yaml           # Gateway collector config
 │   ├── otel-processor.yaml         # Processor collector config
@@ -41,6 +42,20 @@ configs/
 │   ├── grafana.yaml                # Grafana deployment + Ingress
 │   ├── postgresql.yaml             # PostgreSQL for Grafana HA
 │   └── prometheus.yaml             # Prometheus for stack monitoring
+│
+├── terraform/                      # Infrastructure as Code (AWS)
+│   ├── main.tf                     # Main Terraform configuration
+│   ├── variables.tf                # Input variables
+│   ├── outputs.tf                  # Output values
+│   ├── terraform.tfvars.example    # Example variable values
+│   └── README.md                   # Terraform documentation
+│
+├── ansible/                        # Configuration Management
+│   ├── playbook.yml                # Main deployment playbook
+│   ├── inventory.example           # Example inventory file
+│   ├── templates/
+│   │   └── env.j2                  # Environment file template
+│   └── README.md                   # Ansible documentation
 │
 └── scripts/                        # Operational scripts
     ├── backup.sh                   # Backup all volumes
@@ -108,6 +123,41 @@ kubectl apply -f grafana.yaml
 kubectl apply -f otel-gateway.yaml
 kubectl apply -f otel-processor.yaml
 ```
+
+### Terraform: AWS Infrastructure
+
+```bash
+cd terraform
+
+# Initialize and deploy
+terraform init
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your values
+terraform apply
+
+# Configure kubectl
+$(terraform output -raw kubeconfig_command)
+```
+
+Creates: VPC, EKS cluster, S3 bucket, IAM roles. See [terraform/README.md](terraform/README.md).
+
+### Ansible: Automated Docker Deployment
+
+```bash
+cd ansible
+
+# Configure inventory
+cp inventory.example inventory
+# Edit inventory with your server IPs
+
+# Deploy single-node
+ansible-playbook -i inventory playbook.yml
+
+# Deploy scalable with Kafka
+ansible-playbook -i inventory playbook.yml -e deployment_type=scalable
+```
+
+See [ansible/README.md](ansible/README.md).
 
 ## Component Overview
 
