@@ -206,12 +206,14 @@ spec:
         runAsGroup: 10001
         runAsUser: 10001
         runAsNonRoot: true
-      containers:
-        - name: loki
-          image: grafana/loki:2.9.3
-          args:
-            - "-config.file=/etc/loki/loki.yaml"
-            - "-target=all"
+      # Init container to substitute environment variables in config
+      initContainers:
+        - name: config-init
+          image: bhgedigital/envsubst:latest
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            runAsNonRoot: true
           env:
             - name: S3_ACCESS_KEY
               valueFrom:
@@ -223,6 +225,18 @@ spec:
                 secretKeyRef:
                   name: loki-s3-credentials
                   key: secret-key
+          command: ['sh', '-c', 'envsubst < /config-template/loki.yaml > /config/loki.yaml']
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config-rendered
+              mountPath: /config
+      containers:
+        - name: loki
+          image: grafana/loki:2.9.3
+          args:
+            - "-config.file=/config/loki.yaml"
+            - "-target=all"
           ports:
             - name: http
               containerPort: 3100
@@ -261,16 +275,18 @@ spec:
                 - ALL
             readOnlyRootFilesystem: true
           volumeMounts:
-            - name: config
-              mountPath: /etc/loki
+            - name: config-rendered
+              mountPath: /config
             - name: data
               mountPath: /loki
             - name: tmp
               mountPath: /tmp
       volumes:
-        - name: config
+        - name: config-template
           configMap:
             name: loki-config
+        - name: config-rendered
+          emptyDir: {}
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:

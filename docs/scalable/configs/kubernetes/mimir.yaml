@@ -176,12 +176,10 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9009"
     spec:
-      containers:
-        - name: mimir
-          image: grafana/mimir:2.11.0
-          args:
-            - "-config.file=/etc/mimir/mimir.yaml"
-            - "-target=all"
+      # Init container to substitute environment variables in config
+      initContainers:
+        - name: config-init
+          image: bhgedigital/envsubst:latest
           env:
             - name: S3_ACCESS_KEY
               valueFrom:
@@ -193,6 +191,18 @@ spec:
                 secretKeyRef:
                   name: mimir-s3-credentials
                   key: secret-key
+          command: ['sh', '-c', 'envsubst < /config-template/mimir.yaml > /config/mimir.yaml']
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config-rendered
+              mountPath: /config
+      containers:
+        - name: mimir
+          image: grafana/mimir:2.11.0
+          args:
+            - "-config.file=/config/mimir.yaml"
+            - "-target=all"
           ports:
             - name: http
               containerPort: 9009
@@ -225,14 +235,16 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           volumeMounts:
-            - name: config
-              mountPath: /etc/mimir
+            - name: config-rendered
+              mountPath: /config
             - name: data
               mountPath: /data
       volumes:
-        - name: config
+        - name: config-template
           configMap:
             name: mimir-config
+        - name: config-rendered
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

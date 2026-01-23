@@ -8,6 +8,7 @@
 
 - [Before We Begin](#before-we-begin)
 - [What We're Building](#what-were-building)
+- [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
 - [Understanding the Phases](#understanding-the-phases)
 
@@ -25,18 +26,25 @@
 - [Step 10: Connect Your Applications](#step-10-connect-your-applications)
 - [Phase 1 Complete](#phase-1-complete)
 
-### Phase 2: Adding Kafka for Reliability
-- [Phase 2: Adding Kafka for Reliability](#phase-2-adding-kafka-for-reliability)
+### Phase 2: Scalable Docker Deployment
+- [What Changes in Phase 2](#what-changes-in-phase-2)
+- [Phase 2 Architecture](#phase-2-architecture)
+- [Step-by-Step Deployment](#step-1-navigate-to-scalable-configs)
+
+### Phase 3: Kubernetes Deployment
+- [Kubernetes Architecture](#kubernetes-architecture)
+- [Deployment Steps](#step-1-review-kubernetes-manifests)
+
+### Phase 4: Production Infrastructure (Terraform)
+- [AWS Infrastructure](#phase-4-production-infrastructure-with-terraform)
+
+### Automation Options
+- [Ansible Deployment](#automated-deployment-with-ansible)
 
 ### Troubleshooting
 - [The Debugging Mindset](#the-debugging-mindset)
 - [Quick Diagnostic Commands](#quick-diagnostic-commands)
 - [Common Issues](#common-issues)
-  - [OTel Collector keeps restarting](#otel-collector-keeps-restarting)
-  - [Data not appearing in Grafana](#data-not-appearing-in-grafana)
-  - [Jaeger queries are slow](#jaeger-queries-are-slow)
-  - [Loki rate limit exceeded](#loki-rate-limit-exceeded)
-  - [Can't connect to backends](#cant-connect-to-backends)
 - [Getting Help](#getting-help)
 
 ### Next Steps
@@ -44,17 +52,115 @@
 
 ---
 
+## Quick Start (5 Minutes)
+
+**Just want to get it running?** Use the pre-built configurations:
+
+```bash
+# Clone the repo
+git clone <this-repo> && cd opensource-otel-setup
+
+# Phase 1: Single-node (simplest)
+cd docs/scalable/configs/docker
+docker compose -f docker-compose-single.yaml up -d
+
+# Access Grafana at http://localhost:3000 (admin/admin)
+```
+
+**Want scalable setup with Kafka?**
+```bash
+docker compose -f docker-compose-scalable.yaml up -d
+```
+
+**Want to understand what you're deploying?** Continue reading below.
+
+---
+
 ## Before We Begin
 
-This guide will walk you through deploying a complete observability stack—from a simple single-server setup to a scalable, highly-available platform. But before we dive into commands and configuration files, let me set some expectations.
+This guide offers **two paths**:
 
-**This isn't a copy-paste tutorial.** While I'll provide all the configuration you need, I'll also explain what each piece does and why it's configured that way. Understanding the "why" will save you hours of debugging when something doesn't work as expected.
+| Path | Time | Best For |
+|------|------|----------|
+| **Quick Start** (above) | 5 min | Getting up and running fast |
+| **Full Guide** (below) | 45 min+ | Understanding each component, customization |
 
-**You'll make mistakes, and that's fine.** I've tried to anticipate common problems and included troubleshooting guidance, but every environment is different. When something goes wrong, the explanations in this guide should help you figure out what's happening.
+**If you're new to observability**, I recommend reading through the full Phase 1 guide at least once. Understanding how the pieces fit together will save you hours of debugging later.
 
-**Start simple.** The temptation is to jump straight to the "production-grade" setup with Kafka and Kubernetes. Resist it. Start with Phase 1, get comfortable with the components, then scale up when you actually need to. Many teams run Phase 1 successfully for years.
+**Key principles:**
+- **Start simple.** Phase 1 handles up to 50,000 events/sec—more than most teams need
+- **Config files exist.** Everything is pre-built in `configs/`. You can use them directly or learn from them
+- **Mistakes are expected.** The troubleshooting section covers common issues
 
-If you haven't already, I strongly recommend reading the [Architecture Overview](./architecture.md) first. It explains why we chose each component and how data flows through the system. This guide focuses on the how; that document covers the why.
+If you haven't already, read the [Architecture Overview](./architecture.md) first—it explains the "why" behind each decision.
+
+---
+
+## Repository Structure
+
+Before diving in, let's understand how this repository is organized. This will help you find the right configuration files:
+
+```
+docs/scalable/
+├── README.md                    # Overview and quick start
+├── architecture.md              # Deep-dive into design decisions
+├── implementation-guide.md      # This file - step-by-step deployment
+│
+└── configs/                     # All configuration files
+    │
+    ├── docker/                  # Docker Compose deployments
+    │   ├── docker-compose-single.yaml    # Phase 1: Single-node setup
+    │   ├── docker-compose-scalable.yaml  # Phase 2: With Kafka
+    │   ├── otel-collector.yaml           # Phase 1 collector config
+    │   ├── otel-gateway.yaml             # Phase 2 gateway config
+    │   ├── otel-processor.yaml           # Phase 2 processor config
+    │   ├── haproxy.cfg                   # Load balancer config
+    │   ├── tempo.yaml                    # Trace storage (Phase 2)
+    │   ├── mimir.yaml                    # Metrics storage (Phase 2)
+    │   ├── mimir-runtime.yaml            # Mimir runtime config
+    │   ├── loki.yaml                     # Log storage
+    │   ├── prometheus.yml                # Stack self-monitoring
+    │   ├── alertmanager-fallback.yaml    # Alertmanager default config
+    │   └── grafana/provisioning/         # Auto-configured datasources
+    │
+    ├── kubernetes/              # Kubernetes manifests
+    │   ├── namespace.yaml                # observability namespace
+    │   ├── kafka-cluster.yaml            # Strimzi Kafka cluster
+    │   ├── minio.yaml                    # S3-compatible storage
+    │   ├── otel-gateway.yaml             # Gateway Deployment + HPA
+    │   ├── otel-processor.yaml           # Processor Deployment + HPA
+    │   ├── tempo.yaml                    # Tempo StatefulSet
+    │   ├── mimir.yaml                    # Mimir StatefulSet
+    │   ├── loki.yaml                     # Loki StatefulSet
+    │   ├── grafana.yaml                  # Grafana Deployment
+    │   ├── prometheus.yaml               # Prometheus StatefulSet
+    │   └── postgresql.yaml               # Grafana HA database
+    │
+    ├── terraform/               # AWS infrastructure
+    │   ├── main.tf                       # EKS cluster, VPC, S3
+    │   ├── variables.tf                  # Configurable inputs
+    │   └── outputs.tf                    # Useful outputs
+    │
+    ├── ansible/                 # Automated deployment
+    │   ├── playbook.yml                  # Main playbook
+    │   ├── inventory.example             # Sample inventory
+    │   └── templates/env.j2              # Environment template
+    │
+    └── scripts/                 # Operational scripts
+        ├── backup.sh                     # Volume backup
+        ├── restore.sh                    # Restore from backup
+        └── health-check.sh               # Stack health check
+```
+
+**Which configs should you use?**
+
+| Starting Point | Use These Files |
+|---------------|-----------------|
+| Learning/Dev | `docker/docker-compose-single.yaml` + `docker/otel-collector.yaml` |
+| Production Docker | `docker/docker-compose-scalable.yaml` + all Docker configs |
+| Kubernetes | Everything in `kubernetes/` |
+| AWS Infrastructure | `terraform/` + `kubernetes/` |
+| Automated VM Setup | `ansible/playbook.yml` |
 
 ---
 
@@ -121,6 +227,8 @@ When to move:        When to move:          When to move:
 ---
 
 # Phase 1: Single-Node Deployment
+
+> **Using Pre-built Configs?** Skip to [Step 8: Deploy](#step-8-deploy). All config files referenced below already exist in `docs/scalable/configs/docker/`. The walkthrough explains what each config does—useful for learning and customization.
 
 ## What You'll Build
 
@@ -687,11 +795,14 @@ services:
           cpus: '0.5'
           memory: 512M
     
+    # IMPORTANT: otel-collector-contrib is a distroless image (no wget/curl)
+    # We use --version as a simple liveness check. For production,
+    # verify health externally: curl http://<host>:13133/health
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
       start_period: 10s
     
     restart: unless-stopped
@@ -981,7 +1092,9 @@ RETENTION_DAYS="${RETENTION_DAYS:-7}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_PATH="${BACKUP_DIR}/${TIMESTAMP}"
 
-# Volumes to backup
+# Volumes to backup (names must match docker-compose.yml)
+# Phase 1 uses: otel-storage, jaeger-data, prometheus-data, loki-data, grafana-data
+# Phase 2 uses: otel-scalable-* prefix (see docker-compose-scalable.yaml)
 VOLUMES=(
   "otel-storage"
   "jaeger-data"
@@ -1368,6 +1481,8 @@ At this point, you have a fully functional observability stack. Before moving to
 
 # Phase 2: Adding Kafka for Reliability
 
+> **All configs are pre-built.** Unlike Phase 1 (which walks through creating configs), Phase 2 uses ready-to-deploy files from `docs/scalable/configs/docker/`. Just run `docker compose -f docker-compose-scalable.yaml up -d`.
+
 When you've outgrown Phase 1—either hitting throughput limits, needing high availability, or requiring backend maintenance without data loss—it's time to add Kafka as a buffer layer.
 
 ## What Changes in Phase 2
@@ -1405,15 +1520,21 @@ ls -la
 You should see:
 ```
 docker-compose-scalable.yaml    # Main deployment file
+docker-compose-single.yaml      # Phase 1 reference (simpler setup)
 otel-gateway.yaml               # Gateway collector config
 otel-processor.yaml             # Processor collector config  
+otel-collector.yaml             # Phase 1 collector (reference)
 haproxy.cfg                     # Load balancer config
-tempo.yaml                      # Trace storage config
-mimir.yaml                      # Metrics storage config
+tempo.yaml                      # Trace storage config (replaces Jaeger)
+mimir.yaml                      # Metrics storage config (replaces Prometheus for app metrics)
+mimir-runtime.yaml              # Mimir runtime configuration
 loki.yaml                       # Log storage config
-prometheus.yml                  # Stack self-monitoring
-grafana/                        # Grafana provisioning
+prometheus.yml                  # Stack self-monitoring only
+alertmanager-fallback.yaml      # Default alertmanager config for Mimir
+grafana/                        # Grafana provisioning (datasources)
 ```
+
+> **Key Change from Phase 1:** In Phase 2, we replace Jaeger with **Tempo** (better at scale, uses object storage) and add **Mimir** for application metrics (Prometheus still monitors the stack itself). This is an important architectural decision that enables unlimited retention and horizontal scaling.
 
 ## Step 2: Understand the Components
 
@@ -1467,6 +1588,87 @@ Processors consume from Kafka and do the heavy lifting: tail-based sampling, att
 | **Tempo** | Jaeger | Object storage native, cheaper at scale, TraceQL |
 | **Mimir** | Prometheus | Horizontally scalable, unlimited retention |
 | **Loki** | (same) | Already scalable by design |
+
+### Complete Data Flow Diagram
+
+Understanding the complete data flow helps with debugging:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                DATA FLOW                                          │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│  Your Applications                                                               │
+│       │                                                                          │
+│       │ OTLP (gRPC :4317 or HTTP :4318)                                          │
+│       ▼                                                                          │
+│  ┌─────────────┐                                                                 │
+│  │  HAProxy    │  Load balances across healthy gateways                          │
+│  │  :4317/:4318│  Stats UI at :8404/stats                                        │
+│  └──────┬──────┘                                                                 │
+│         │                                                                        │
+│         ▼                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐             │
+│  │              Gateway Collectors (stateless, scalable)           │             │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐                          │             │
+│  │  │Gateway 1│  │Gateway 2│  │Gateway 3│  ... (scale with load)   │             │
+│  │  └────┬────┘  └────┬────┘  └────┬────┘                          │             │
+│  │       │           │           │                                  │             │
+│  │       └───────────┼───────────┘                                  │             │
+│  └───────────────────┼──────────────────────────────────────────────┘             │
+│                      │                                                            │
+│                      ▼                                                            │
+│  ┌──────────────────────────────────────────────────────────────────┐            │
+│  │                    Kafka (KRaft mode, no Zookeeper)              │            │
+│  │  Topics:                                                          │            │
+│  │    • otlp-traces  (12 partitions, 24h retention)                 │            │
+│  │    • otlp-metrics (12 partitions, 24h retention)                 │            │
+│  │    • otlp-logs    (12 partitions, 24h retention)                 │            │
+│  └───────────────────────────┬──────────────────────────────────────┘            │
+│                              │                                                    │
+│                              ▼                                                    │
+│  ┌───────────────────────────────────────────────────────────────────┐           │
+│  │             Processor Collectors (stateless, scalable)            │           │
+│  │  ┌───────────┐  ┌───────────┐  ┌───────────┐                      │           │
+│  │  │Processor 1│  │Processor 2│  │Processor 3│  ... (scale with load)│          │
+│  │  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘                      │           │
+│  │        │              │              │                             │           │
+│  │        │   Processing applied:                                    │           │
+│  │        │   • Memory limiting (OOM protection)                     │           │
+│  │        │   • Tail-based sampling (keep errors, slow traces, 10%)  │           │
+│  │        │   • Resource attributes added                            │           │
+│  │        │   • Batching for efficient export                        │           │
+│  │        │              │              │                             │           │
+│  └────────┼──────────────┼──────────────┼─────────────────────────────┘           │
+│           │              │              │                                         │
+│           ▼              ▼              ▼                                         │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐                                   │
+│  │   Tempo    │  │   Mimir    │  │    Loki    │                                   │
+│  │  (Traces)  │  │ (Metrics)  │  │   (Logs)   │                                   │
+│  │   :3200    │  │   :9009    │  │   :3100    │                                   │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘                                   │
+│        │               │               │                                          │
+│        └───────────────┼───────────────┘                                          │
+│                        ▼                                                          │
+│               ┌────────────────┐                                                  │
+│               │    Grafana     │  Unified visualization                           │
+│               │     :3000      │  with correlation links                          │
+│               └────────────────┘                                                  │
+│                                                                                   │
+│  ┌────────────────┐                                                              │
+│  │   Prometheus   │  Monitors all the above components (stack self-monitoring)   │
+│  │     :9090      │  Scrapes metrics from every service                          │
+│  └────────────────┘                                                              │
+│                                                                                   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this architecture?**
+1. **HAProxy** provides single entry point, health-aware routing, and easy scaling
+2. **Kafka** decouples ingestion from processing - backends can be down without losing data
+3. **Gateways** are fast and stateless - easy to scale, quick to restart
+4. **Processors** do heavy lifting - can scale independently based on processing needs
+5. **Separate storage backends** - each optimized for its data type (traces, metrics, logs)
 
 ## Step 3: Deploy the Stack
 
@@ -1680,6 +1882,65 @@ kubectl apply -f 'https://strimzi.io/install/latest?namespace=kafka'
 # Wait for operator to be ready
 kubectl wait deployment/strimzi-cluster-operator --for=condition=Available -n kafka --timeout=300s
 ```
+
+## Understanding the Init Container Pattern
+
+**Important:** The Kubernetes manifests for Tempo, Mimir, and Loki use an **init container pattern** for credential handling.
+
+**Why is this needed?**
+
+Kubernetes ConfigMaps don't support environment variable substitution. When you write `${S3_ACCESS_KEY}` in a ConfigMap, it's stored literally as the string `${S3_ACCESS_KEY}`, not the actual value.
+
+**How we solve it:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Pod Startup Sequence                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. Init Container (config-init) starts:                        │
+│     ┌──────────────────────────────────────────────────────┐    │
+│     │  - Reads /config-template/tempo.yaml (from ConfigMap) │    │
+│     │  - Reads S3_ACCESS_KEY and S3_SECRET_KEY from Secret  │    │
+│     │  - Uses `envsubst` to replace ${VAR} placeholders     │    │
+│     │  - Writes rendered config to /config/tempo.yaml       │    │
+│     └──────────────────────────────────────────────────────┘    │
+│                              │                                   │
+│                              ▼                                   │
+│  2. Main Container (tempo) starts:                              │
+│     ┌──────────────────────────────────────────────────────┐    │
+│     │  - Reads /config/tempo.yaml (with real credentials)   │    │
+│     │  - Connects to S3 successfully                        │    │
+│     └──────────────────────────────────────────────────────┘    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**The init container in each manifest:**
+```yaml
+initContainers:
+  - name: config-init
+    image: bhgedigital/envsubst:latest  # Small image with envsubst
+    env:
+      - name: S3_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: tempo-s3-credentials
+            key: access-key
+      - name: S3_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: tempo-s3-credentials
+            key: secret-key
+    command: ['sh', '-c', 'envsubst < /config-template/tempo.yaml > /config/tempo.yaml']
+    volumeMounts:
+      - name: config-template    # ConfigMap with ${VAR} placeholders
+        mountPath: /config-template
+      - name: config-rendered    # emptyDir for rendered config
+        mountPath: /config
+```
+
+**If you're using AWS IRSA:** You can simplify this by removing access keys entirely. IRSA injects credentials automatically via the pod's service account. Update the ConfigMaps to remove the `access_key` and `secret_key` fields.
 
 ## Step 3: Deploy in Order
 
@@ -1916,6 +2177,225 @@ You now have a production-ready Kubernetes deployment:
 
 ---
 
+# Phase 4: Production Infrastructure with Terraform
+
+If you're deploying on AWS and want proper infrastructure-as-code, use the Terraform configuration to provision:
+
+- **VPC** with public/private subnets across 3 AZs
+- **EKS cluster** with managed node groups
+- **S3 bucket** for object storage (Tempo, Mimir, Loki)
+- **IAM roles** for service account integration (IRSA)
+
+## Step 1: Review Terraform Configuration
+
+```bash
+cd docs/scalable/configs/terraform
+ls -la
+```
+
+```
+main.tf          # VPC, EKS, S3, IAM resources
+variables.tf     # Configurable inputs (region, cluster name, node sizes)
+outputs.tf       # Useful outputs (cluster endpoint, S3 bucket, IRSA roles)
+```
+
+## Step 2: Create Your Variables File
+
+```bash
+# Copy example and customize
+cat > terraform.tfvars << 'EOF'
+# AWS Configuration
+aws_region  = "us-west-2"
+environment = "production"
+
+# Cluster Configuration
+cluster_name       = "observability-prod"
+kubernetes_version = "1.28"
+
+# Node Group Sizing (adjust based on expected load)
+system_node_instance_types       = ["t3.medium"]
+system_node_desired_size         = 2
+observability_node_instance_types = ["t3.xlarge"]
+observability_node_desired_size   = 3
+
+# Retention (days)
+trace_retention_days   = 30
+metrics_retention_days = 90
+logs_retention_days    = 30
+EOF
+```
+
+## Step 3: Deploy Infrastructure
+
+```bash
+# Initialize Terraform
+terraform init
+
+# Review the plan
+terraform plan -var-file="terraform.tfvars"
+
+# Apply (this takes 15-20 minutes for EKS)
+terraform apply -var-file="terraform.tfvars"
+```
+
+## Step 4: Configure kubectl
+
+```bash
+# Get the kubeconfig command from outputs
+terraform output kubeconfig_command
+
+# Run it (example)
+aws eks update-kubeconfig --region us-west-2 --name observability-prod
+```
+
+## Step 5: Update Kubernetes Configs for AWS
+
+The Terraform outputs include S3 configuration snippets for each backend:
+
+```bash
+# Get S3 configuration for Tempo
+terraform output tempo_s3_config
+
+# Get S3 configuration for Mimir  
+terraform output mimir_s3_config
+
+# Get S3 configuration for Loki
+terraform output loki_s3_config
+
+# Get the IAM role ARN for service accounts
+terraform output s3_irsa_role_arn
+```
+
+Update the Kubernetes manifests to:
+1. Use the S3 bucket instead of MinIO
+2. Add the IRSA annotation to service accounts
+3. Remove access key/secret key (IRSA handles auth)
+
+Example service account annotation:
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tempo
+  namespace: observability
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/observability-prod-s3-access
+```
+
+## Step 6: Deploy Kubernetes Resources
+
+```bash
+cd ../kubernetes
+
+# Apply in order (skip minio.yaml - using S3 instead)
+kubectl apply -f namespace.yaml
+kubectl apply -f kafka-cluster.yaml
+kubectl apply -f tempo.yaml
+kubectl apply -f mimir.yaml
+kubectl apply -f loki.yaml
+kubectl apply -f prometheus.yaml
+kubectl apply -f grafana.yaml
+kubectl apply -f otel-gateway.yaml
+kubectl apply -f otel-processor.yaml
+```
+
+---
+
+# Automated Deployment with Ansible
+
+For VM-based deployments (not Kubernetes), use Ansible to automate the entire setup:
+
+## What Ansible Deploys
+
+The playbook handles:
+- Docker installation (if not present)
+- Directory structure creation
+- Configuration file deployment
+- Docker Compose stack startup
+- Systemd service setup (auto-start on boot)
+- Backup cron job configuration
+
+## Step 1: Configure Inventory
+
+```bash
+cd docs/scalable/configs/ansible
+
+# Copy and edit the inventory
+cp inventory.example inventory
+```
+
+Edit `inventory` with your server details:
+```ini
+[observability]
+# Single server
+prod-observability ansible_host=10.0.1.100
+
+[observability:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+# Choose deployment type
+deployment_type=scalable  # or 'single' for Phase 1
+
+# Credentials (CHANGE THESE)
+grafana_admin_password=your-secure-password
+
+# Versions (optional - defaults are tested)
+otel_collector_version=0.91.0
+```
+
+## Step 2: Run the Playbook
+
+```bash
+# Dry run first
+ansible-playbook -i inventory playbook.yml --check
+
+# Deploy for real
+ansible-playbook -i inventory playbook.yml
+
+# Deploy scalable setup specifically
+ansible-playbook -i inventory playbook.yml -e deployment_type=scalable
+```
+
+## Step 3: Verify Deployment
+
+After completion, the playbook displays access information:
+```
+============================================
+Observability Stack Deployed Successfully!
+============================================
+
+Access URLs:
+  - Grafana:    http://10.0.1.100:3000 (admin/your-secure-password)
+  - Prometheus: http://10.0.1.100:9090
+  - Tempo:      http://10.0.1.100:3200
+
+OTLP Endpoints:
+  - gRPC: 10.0.1.100:4317
+  - HTTP: 10.0.1.100:4318
+
+Management Commands:
+  - Status:  cd /opt/observability && docker compose ps
+  - Logs:    cd /opt/observability && docker compose logs -f
+  - Restart: systemctl restart observability
+============================================
+```
+
+## What Gets Installed
+
+| Path | Contents |
+|------|----------|
+| `/opt/observability/` | Main installation directory |
+| `/opt/observability/docker-compose.yaml` | Deployment file |
+| `/opt/observability/*.yaml` | All configuration files |
+| `/opt/observability/grafana/` | Grafana provisioning |
+| `/opt/observability/backups/` | Backup storage |
+| `/etc/systemd/system/observability.service` | Systemd service |
+
+The stack auto-starts on boot via systemd and runs daily backups at 2 AM.
+
+---
+
 # Troubleshooting
 
 When things go wrong—and they will—here's how to diagnose and fix common issues.
@@ -2085,6 +2565,152 @@ docker network inspect observability
 
 ---
 
+## Phase 2 Specific Issues
+
+### "Kafka not starting (KRaft mode)"
+
+**Symptom:** Kafka container fails to start or keeps restarting.
+
+**Diagnosis:**
+```bash
+docker compose -f docker-compose-scalable.yaml logs kafka | tail -50
+```
+
+**Common causes and fixes:**
+1. **Insufficient memory:** Kafka needs at least 2GB. Check `docker stats kafka`.
+2. **Corrupt KRaft metadata:** If you changed the cluster ID, delete the volume:
+   ```bash
+   docker compose -f docker-compose-scalable.yaml down
+   docker volume rm otel-scalable-kafka
+   docker compose -f docker-compose-scalable.yaml up -d
+   ```
+
+### "Consumer lag keeps growing"
+
+**Symptom:** Data is being produced to Kafka but not consumed fast enough.
+
+**Diagnosis:**
+```bash
+# Check consumer group lag
+docker compose -f docker-compose-scalable.yaml exec kafka \
+  kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+  --describe --group otel-trace-processors
+```
+
+**Fix:** Scale up processors:
+```bash
+docker compose -f docker-compose-scalable.yaml up -d --scale otel-processor=4
+```
+
+### "HAProxy shows all backends down"
+
+**Symptom:** Stats page (`:8404/stats`) shows red for all gateways.
+
+**Diagnosis:**
+```bash
+# Check if gateways are running
+docker compose -f docker-compose-scalable.yaml ps | grep gateway
+
+# Check gateway health directly
+curl http://localhost:13133/health  # Won't work - internal only
+docker compose -f docker-compose-scalable.yaml exec otel-gateway-1 \
+  wget -qO- http://localhost:13133/health
+```
+
+**Common causes:**
+- Gateways not started yet (Kafka must be healthy first)
+- Network misconfiguration
+
+---
+
+## Kubernetes Specific Issues
+
+### "Pods stuck in Pending"
+
+**Symptom:** Pods won't start, stay in Pending state.
+
+**Diagnosis:**
+```bash
+kubectl describe pod <pod-name> -n observability
+```
+
+**Common causes:**
+1. **Insufficient resources:** Check node capacity:
+   ```bash
+   kubectl describe nodes | grep -A 5 "Allocated resources"
+   ```
+2. **PVC not binding:** Check storage class:
+   ```bash
+   kubectl get pvc -n observability
+   kubectl get storageclass
+   ```
+3. **Node selector/taints:** Check if pods can schedule:
+   ```bash
+   kubectl get nodes --show-labels
+   ```
+
+### "Init container failing"
+
+**Symptom:** Pods in `Init:Error` or `Init:CrashLoopBackOff` state.
+
+**Diagnosis:**
+```bash
+# Check init container logs
+kubectl logs <pod-name> -n observability -c config-init
+
+# Check if secrets exist
+kubectl get secret tempo-s3-credentials -n observability
+kubectl get secret mimir-s3-credentials -n observability
+kubectl get secret loki-s3-credentials -n observability
+```
+
+**Common causes:**
+1. **Secret not created:** Create the required secrets (see credentials section above)
+2. **Wrong secret keys:** Verify the secret has `access-key` and `secret-key` keys
+3. **ConfigMap not mounted:** Check the pod spec for volume mount issues
+
+### "S3 connection errors in backends"
+
+**Symptom:** Tempo/Mimir/Loki can't write to S3/MinIO.
+
+**Diagnosis:**
+```bash
+kubectl logs tempo-0 -n observability | grep -i "s3\|error"
+kubectl logs mimir-0 -n observability | grep -i "s3\|error"
+kubectl logs loki-0 -n observability | grep -i "s3\|error"
+```
+
+**Common causes:**
+1. **MinIO not ready:** Check MinIO pods:
+   ```bash
+   kubectl get pods -n minio
+   kubectl logs minio-0 -n minio
+   ```
+2. **Buckets not created:** MinIO init job should create them:
+   ```bash
+   kubectl logs -l app=minio-init -n minio
+   ```
+3. **Wrong credentials:** Verify credentials match between secrets
+4. **Wrong endpoint:** Should be `minio.minio.svc.cluster.local:9000`
+
+### "Kafka topics not created (Strimzi)"
+
+**Symptom:** Processors can't consume - topics don't exist.
+
+**Diagnosis:**
+```bash
+kubectl get kafkatopic -n kafka
+kubectl describe kafkatopic otlp-traces -n kafka
+```
+
+**Fix:** Ensure Kafka cluster is ready:
+```bash
+kubectl get kafka -n kafka
+kubectl wait kafka/otel-kafka --for=condition=Ready -n kafka --timeout=600s
+```
+
+---
+
 ## Getting Help
 
 If you're stuck:
@@ -2107,3 +2733,118 @@ Once your stack is stable:
 5. **Plan for growth** - Monitor capacity and plan Phase 2 before you need it
 
 For architecture details and design decisions, see the [Architecture Overview](./architecture.md).
+
+---
+
+## Quick Reference
+
+### Port Reference
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **OTLP gRPC** | 4317 | Primary telemetry ingestion |
+| **OTLP HTTP** | 4318 | Alternative telemetry ingestion |
+| **Grafana** | 3000 | Visualization UI |
+| **Prometheus** | 9090 | Metrics query UI |
+| **Tempo** | 3200 | Trace query API |
+| **Loki** | 3100 | Log query API |
+| **Mimir** | 9009 | Metrics storage API |
+| **Jaeger** | 16686 | Legacy trace UI (Phase 1) |
+| **Kafka** | 9092 | Message broker (Phase 2) |
+| **HAProxy Stats** | 8404 | Load balancer stats (Phase 2) |
+| **Collector Metrics** | 8888 | Collector self-metrics |
+| **Collector Health** | 13133 | Health check endpoint |
+
+### Key Metrics to Monitor
+
+```promql
+# Collector receiving data?
+otelcol_receiver_accepted_spans{receiver="otlp"}
+otelcol_receiver_accepted_metric_points{receiver="otlp"}
+otelcol_receiver_accepted_log_records{receiver="otlp"}
+
+# Collector exporting successfully?
+otelcol_exporter_sent_spans
+otelcol_exporter_send_failed_spans
+
+# Queue backing up?
+otelcol_exporter_queue_size
+otelcol_exporter_queue_capacity
+
+# Memory pressure?
+otelcol_processor_memory_limiter_refused_spans
+```
+
+### Common Commands
+
+```bash
+# Phase 1 - Start/Stop
+docker compose up -d
+docker compose down
+
+# Phase 2 - Start/Stop
+docker compose -f docker-compose-scalable.yaml up -d
+docker compose -f docker-compose-scalable.yaml down
+
+# Phase 2 - Scale collectors
+docker compose -f docker-compose-scalable.yaml up -d --scale otel-gateway=3 --scale otel-processor=3
+
+# Watch logs
+docker compose logs -f otel-collector
+docker compose -f docker-compose-scalable.yaml logs -f otel-gateway
+
+# Check health
+./scripts/health-check.sh
+./scripts/health-check.sh --json
+
+# Backup
+./scripts/backup.sh
+BACKUP_DIR=/mnt/backups ./scripts/backup.sh
+
+# Kubernetes - Check status
+kubectl get pods -n observability
+kubectl get hpa -n observability
+kubectl logs -f deploy/otel-gateway -n observability
+```
+
+### File Locations (After Ansible Deployment)
+
+| Path | Contents |
+|------|----------|
+| `/opt/observability/` | Main installation |
+| `/opt/observability/docker-compose.yaml` | Deployment file |
+| `/opt/observability/backups/` | Backup archives |
+| `/opt/observability/logs/` | Log files |
+| `/var/lib/docker/volumes/otel-*` | Docker volumes |
+
+### Environment Variables for Applications
+
+```bash
+# Basic configuration
+OTEL_SERVICE_NAME=your-service-name
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector-host:4317
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
+
+# Optional: Use HTTP instead of gRPC
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector-host:4318
+
+# Optional: Set sampling
+OTEL_TRACES_SAMPLER=parentbased_traceidratio
+OTEL_TRACES_SAMPLER_ARG=0.1  # 10% sampling
+```
+
+---
+
+## Summary: Choosing Your Path
+
+| Scenario | Recommended Phase | Key Files |
+|----------|-------------------|-----------|
+| **Learning/Development** | Phase 1 | `docker-compose-single.yaml`, `otel-collector.yaml` |
+| **Small production (<50K eps)** | Phase 1 | Same as above |
+| **Medium production** | Phase 2 | `docker-compose-scalable.yaml`, `otel-gateway.yaml`, `otel-processor.yaml` |
+| **Kubernetes org** | Phase 3 | All `kubernetes/*.yaml` files |
+| **AWS production** | Phase 4 + 3 | `terraform/` + `kubernetes/` |
+| **VM automation** | Ansible | `ansible/playbook.yml` |
+
+**Remember:** Start simple, scale when needed. Most teams run Phase 1 successfully for years.

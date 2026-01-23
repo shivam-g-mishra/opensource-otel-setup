@@ -129,15 +129,15 @@ fi
 if [[ -n "$SINGLE_VOLUME" ]]; then
   VOLUMES=("$SINGLE_VOLUME")
 else
+  # Note: Volume names match docker-compose-scalable.yaml naming convention
   VOLUMES=(
-    "prometheus-data"
-    "grafana-data"
-    "loki-data"
-    "jaeger-data"
-    "otel-storage"
-    "kafka-data"
-    "tempo-data"
-    "mimir-data"
+    "otel-scalable-prometheus"
+    "otel-scalable-grafana"
+    "otel-scalable-loki"
+    "otel-scalable-kafka"
+    "otel-scalable-processor"
+    "otel-scalable-tempo"
+    "otel-scalable-mimir"
   )
 fi
 
