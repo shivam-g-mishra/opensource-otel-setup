@@ -336,35 +336,58 @@
 - name: Display deployment information
   hosts: observability
   gather_facts: no
+  vars:
+    deployment_type: "{{ deployment_type | default('single') }}"
+    install_dir: /opt/observability
+    grafana_admin_password: "{{ grafana_admin_password | default('admin') }}"
   tasks:
-    - name: Show access information
+    - name: Show access information (single mode)
       debug:
-        msg: |
-          
-          ============================================
-          Observability Stack Deployed Successfully!
-          ============================================
-          
-          Access URLs:
-            - Grafana:    http://{{ ansible_host }}:3000
-                          Username: admin
-                          Password: {{ grafana_admin_password }}
-          {% if deployment_type == 'scalable' %}
-            - Prometheus: http://{{ ansible_host }}:9090
-            - Tempo:      http://{{ ansible_host }}:3200
-            - Mimir:      http://{{ ansible_host }}:9009
-            - Loki:       http://{{ ansible_host }}:3100
-            - HAProxy:    http://{{ ansible_host }}:8404/stats
-          {% endif %}
-          
-          OTLP Endpoints:
-            - gRPC: {{ ansible_host }}:4317
-            - HTTP: {{ ansible_host }}:4318
-          
-          Management Commands:
-            - Status:  cd {{ install_dir }} && docker compose ps
-            - Logs:    cd {{ install_dir }} && docker compose logs -f
-            - Restart: systemctl restart observability
-            - Stop:    systemctl stop observability
-          
-          ============================================
+        msg:
+          - "============================================"
+          - "Observability Stack Deployed Successfully!"
+          - "============================================"
+          - ""
+          - "Access URLs:"
+          - "  - Grafana: http://{{ inventory_hostname }}:3000"
+          - "    Username: admin"
+          - "    Password: {{ grafana_admin_password }}"
+          - ""
+          - "OTLP Endpoints:"
+          - "  - gRPC: {{ inventory_hostname }}:4317"
+          - "  - HTTP: {{ inventory_hostname }}:4318"
+          - ""
+          - "Management Commands:"
+          - "  - Status:  cd {{ install_dir }} && docker compose ps"
+          - "  - Logs:    cd {{ install_dir }} && docker compose logs -f"
+          - "  - Restart: systemctl restart observability"
+          - "  - Stop:    systemctl stop observability"
+          - "============================================"
+      when: deployment_type == 'single'
+
+    - name: Show access information (scalable mode)
+      debug:
+        msg:
+          - "============================================"
+          - "Observability Stack Deployed Successfully!"
+          - "============================================"
+          - ""
+          - "Access URLs:"
+          - "  - Grafana:    http://{{ inventory_hostname }}:3000 (admin/{{ grafana_admin_password }})"
+          - "  - Prometheus: http://{{ inventory_hostname }}:9090"
+          - "  - Tempo:      http://{{ inventory_hostname }}:3200"
+          - "  - Mimir:      http://{{ inventory_hostname }}:9009"
+          - "  - Loki:       http://{{ inventory_hostname }}:3100"
+          - "  - HAProxy:    http://{{ inventory_hostname }}:8404/stats"
+          - ""
+          - "OTLP Endpoints:"
+          - "  - gRPC: {{ inventory_hostname }}:4317"
+          - "  - HTTP: {{ inventory_hostname }}:4318"
+          - ""
+          - "Management Commands:"
+          - "  - Status:  cd {{ install_dir }} && docker compose ps"
+          - "  - Logs:    cd {{ install_dir }} && docker compose logs -f"
+          - "  - Restart: systemctl restart observability"
+          - "  - Stop:    systemctl stop observability"
+          - "============================================"
+      when: deployment_type == 'scalable'
