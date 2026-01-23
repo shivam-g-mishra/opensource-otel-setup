@@ -4,15 +4,32 @@
 
 ---
 
+## Choose Your Path
+
+This guide supports two user journeys. Pick the one that fits your needs:
+
+| | Quick Deploy | Full Learning Guide |
+|---|--------------|---------------------|
+| **Time** | 5 minutes | 45+ minutes |
+| **Best for** | Get running fast, already familiar with observability | Learning, understanding each component, customization |
+| **Approach** | Use pre-built configs, minimal reading | Step-by-step walkthrough with explanations |
+| **Jump to** | [Quick Start](#quick-start-5-minutes) | [Full Guide (Phase 1)](#phase-1-single-node-deployment) |
+
+**Not sure?** If you're new to OpenTelemetry or observability, start with the [Full Guide](#phase-1-single-node-deployment). You can always use the pre-built configs later once you understand how everything works.
+
+---
+
 ## Table of Contents
 
-- [Before We Begin](#before-we-begin)
-- [What We're Building](#what-were-building)
-- [Repository Structure](#repository-structure)
-- [Prerequisites](#prerequisites)
-- [Understanding the Phases](#understanding-the-phases)
+### Getting Started
+- [Quick Start (5 Minutes)](#quick-start-5-minutes) — Deploy immediately with pre-built configs
+- [Repository Structure](#repository-structure) — Where to find configuration files
+- [Prerequisites](#prerequisites) — What you need before starting
+- [Understanding the Phases](#understanding-the-phases) — Overview of deployment options
 
-### Phase 1: Single-Node Deployment
+### Full Learning Guide
+
+#### Phase 1: Single-Node Deployment
 - [What You'll Build](#what-youll-build)
 - [Step 1: Set Up Your Project](#step-1-set-up-your-project)
 - [Step 2: Configure the OpenTelemetry Collector](#step-2-configure-the-opentelemetry-collector)
@@ -24,31 +41,27 @@
 - [Step 8: Deploy](#step-8-deploy)
 - [Step 9: Verify Everything Works](#step-9-verify-everything-works)
 - [Step 10: Connect Your Applications](#step-10-connect-your-applications)
-- [Phase 1 Complete](#phase-1-complete)
 
-### Phase 2: Scalable Docker Deployment
+#### Phase 2: Scalable Docker Deployment
 - [What Changes in Phase 2](#what-changes-in-phase-2)
-- [Phase 2 Architecture](#phase-2-architecture)
-- [Step-by-Step Deployment](#step-1-navigate-to-scalable-configs)
+- [Complete Data Flow Diagram](#complete-data-flow-diagram)
+- [Step-by-Step Deployment](#step-3-deploy-the-stack)
 
-### Phase 3: Kubernetes Deployment
-- [Kubernetes Architecture](#kubernetes-architecture)
-- [Deployment Steps](#step-1-review-kubernetes-manifests)
+#### Phase 3: Kubernetes Deployment
+- [Prerequisites](#prerequisites-1)
+- [Init Container Pattern](#understanding-the-init-container-pattern)
+- [Deployment Steps](#step-3-deploy-in-order)
 
-### Phase 4: Production Infrastructure (Terraform)
-- [AWS Infrastructure](#phase-4-production-infrastructure-with-terraform)
+#### Phase 4: Production Infrastructure (Terraform)
+- [AWS Infrastructure Setup](#phase-4-production-infrastructure-with-terraform)
 
-### Automation Options
+#### Automation Options
 - [Ansible Deployment](#automated-deployment-with-ansible)
 
-### Troubleshooting
-- [The Debugging Mindset](#the-debugging-mindset)
-- [Quick Diagnostic Commands](#quick-diagnostic-commands)
-- [Common Issues](#common-issues)
-- [Getting Help](#getting-help)
-
-### Next Steps
-- [What's Next](#whats-next)
+### Reference
+- [Troubleshooting](#troubleshooting) — Common issues and fixes
+- [Quick Reference](#quick-reference) — Ports, metrics, commands
+- [Summary: Choosing Your Path](#summary-choosing-your-path)
 
 ---
 
@@ -56,43 +69,66 @@
 
 **Just want to get it running?** Use the pre-built configurations:
 
+### Option A: Single-Node (Simplest)
+
 ```bash
 # Clone the repo
 git clone <this-repo> && cd opensource-otel-setup
 
-# Phase 1: Single-node (simplest)
+# Navigate to configs
 cd docs/scalable/configs/docker
+
+# Start the stack
 docker compose -f docker-compose-single.yaml up -d
 
-# Access Grafana at http://localhost:3000 (admin/admin)
+# Verify everything is running
+docker compose -f docker-compose-single.yaml ps
 ```
 
-**Want scalable setup with Kafka?**
+**Access points:**
+- Grafana: http://localhost:3000 (admin/admin)
+- Jaeger: http://localhost:16686
+- Prometheus: http://localhost:9090
+
+**Send telemetry to:** `localhost:4317` (gRPC) or `localhost:4318` (HTTP)
+
+### Option B: Scalable with Kafka
+
 ```bash
+cd docs/scalable/configs/docker
 docker compose -f docker-compose-scalable.yaml up -d
+
+# Scale collectors as needed
+docker compose -f docker-compose-scalable.yaml up -d --scale otel-gateway=3 --scale otel-processor=3
 ```
 
-**Want to understand what you're deploying?** Continue reading below.
+**Additional access points:**
+- HAProxy Stats: http://localhost:8404/stats
+- Tempo: http://localhost:3200
+- Mimir: http://localhost:9009
 
----
+### Option C: Kubernetes
 
-## Before We Begin
+```bash
+cd docs/scalable/configs/kubernetes
 
-This guide offers **two paths**:
+# Install Strimzi operator first
+kubectl create namespace kafka
+kubectl apply -f 'https://strimzi.io/install/latest?namespace=kafka'
 
-| Path | Time | Best For |
-|------|------|----------|
-| **Quick Start** (above) | 5 min | Getting up and running fast |
-| **Full Guide** (below) | 45 min+ | Understanding each component, customization |
+# Deploy the stack
+kubectl apply -f namespace.yaml
+kubectl apply -f minio.yaml
+kubectl apply -f kafka-cluster.yaml
+# ... (see Phase 3 for complete order)
+```
 
-**If you're new to observability**, I recommend reading through the full Phase 1 guide at least once. Understanding how the pieces fit together will save you hours of debugging later.
+### What's Next After Quick Start?
 
-**Key principles:**
-- **Start simple.** Phase 1 handles up to 50,000 events/sec—more than most teams need
-- **Config files exist.** Everything is pre-built in `configs/`. You can use them directly or learn from them
-- **Mistakes are expected.** The troubleshooting section covers common issues
-
-If you haven't already, read the [Architecture Overview](./architecture.md) first—it explains the "why" behind each decision.
+- **Customize configs?** Read the [Full Guide](#phase-1-single-node-deployment) to understand each component
+- **Having issues?** Jump to [Troubleshooting](#troubleshooting)
+- **Connect applications?** See [Connect Your Applications](#step-10-connect-your-applications)
+- **Need to scale?** Read [Phase 2](#phase-2-adding-kafka-for-reliability) for architecture details
 
 ---
 
