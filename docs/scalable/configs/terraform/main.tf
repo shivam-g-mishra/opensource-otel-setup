@@ -79,20 +79,20 @@ module "vpc" {
   private_subnets = var.private_subnet_cidrs
   public_subnets  = var.public_subnet_cidrs
 
-  enable_nat_gateway     = true
-  single_nat_gateway     = var.environment != "production"
-  enable_dns_hostnames   = true
-  enable_dns_support     = true
+  enable_nat_gateway   = true
+  single_nat_gateway   = var.environment != "production"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
   # Tags required for EKS
   public_subnet_tags = {
-    "kubernetes.io/role/elb"                      = 1
-    "kubernetes.io/cluster/${var.cluster_name}"   = "shared"
+    "kubernetes.io/role/elb"                    = 1
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 
   private_subnet_tags = {
-    "kubernetes.io/role/internal-elb"             = 1
-    "kubernetes.io/cluster/${var.cluster_name}"   = "shared"
+    "kubernetes.io/role/internal-elb"           = 1
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 
   tags = {
@@ -142,11 +142,11 @@ module "eks" {
   eks_managed_node_groups = {
     # System node group for core services
     system = {
-      name            = "system"
-      instance_types  = var.system_node_instance_types
-      min_size        = var.system_node_min_size
-      max_size        = var.system_node_max_size
-      desired_size    = var.system_node_desired_size
+      name           = "system"
+      instance_types = var.system_node_instance_types
+      min_size       = var.system_node_min_size
+      max_size       = var.system_node_max_size
+      desired_size   = var.system_node_desired_size
 
       labels = {
         role = "system"
@@ -157,11 +157,11 @@ module "eks" {
 
     # Observability node group for the stack
     observability = {
-      name            = "observability"
-      instance_types  = var.observability_node_instance_types
-      min_size        = var.observability_node_min_size
-      max_size        = var.observability_node_max_size
-      desired_size    = var.observability_node_desired_size
+      name           = "observability"
+      instance_types = var.observability_node_instance_types
+      min_size       = var.observability_node_min_size
+      max_size       = var.observability_node_max_size
+      desired_size   = var.observability_node_desired_size
 
       labels = {
         role = "observability"

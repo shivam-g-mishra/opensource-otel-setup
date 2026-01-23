@@ -86,7 +86,7 @@ output "kubeconfig_command" {
 
 output "tempo_s3_config" {
   description = "S3 configuration for Tempo (add to tempo config)"
-  value = <<-EOT
+  value       = <<-EOT
     storage:
       trace:
         backend: s3
@@ -100,7 +100,7 @@ output "tempo_s3_config" {
 
 output "mimir_s3_config" {
   description = "S3 configuration for Mimir (add to mimir config)"
-  value = <<-EOT
+  value       = <<-EOT
     blocks_storage:
       backend: s3
       s3:
@@ -113,7 +113,7 @@ output "mimir_s3_config" {
 
 output "loki_s3_config" {
   description = "S3 configuration for Loki (add to loki config)"
-  value = <<-EOT
+  value       = <<-EOT
     storage_config:
       aws:
         bucketnames: ${aws_s3_bucket.observability.id}

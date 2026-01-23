@@ -15,7 +15,7 @@
 ---
 - name: Deploy Observability Stack
   hosts: observability
-  become: yes
+  become: true
   vars:
     # Deployment configuration
     deployment_type: "{{ deployment_type | default('single') }}"
@@ -44,13 +44,13 @@
     # =========================================================================
     
     - name: Update apt cache
-      apt:
-        update_cache: yes
+      ansible.builtin.apt:
+        update_cache: true
         cache_valid_time: 3600
       when: ansible_os_family == "Debian"
     
     - name: Install required packages
-      package:
+      ansible.builtin.package:
         name:
           - curl
           - git
@@ -65,9 +65,9 @@
     # =========================================================================
     
     - name: Check if Docker is installed
-      command: docker --version
+      ansible.builtin.command: docker --version
       register: docker_installed
-      ignore_errors: yes
+      ignore_errors: true
       changed_when: false
     
     - name: Install Docker (Debian/Ubuntu)
@@ -75,18 +75,26 @@
         - docker_installed.rc != 0
         - ansible_os_family == "Debian"
       block:
-        - name: Add Docker GPG key
-          apt_key:
+        - name: Create keyrings directory
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: '0755'
+        
+        - name: Download Docker GPG key
+          ansible.builtin.get_url:
             url: https://download.docker.com/linux/ubuntu/gpg
-            state: present
+            dest: /etc/apt/keyrings/docker.asc
+            mode: '0644'
         
         - name: Add Docker repository
-          apt_repository:
-            repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
             state: present
+            filename: docker
         
         - name: Install Docker packages
-          apt:
+          ansible.builtin.apt:
             name:
               - docker-ce
               - docker-ce-cli
@@ -94,32 +102,32 @@
               - docker-buildx-plugin
               - docker-compose-plugin
             state: present
-            update_cache: yes
+            update_cache: true
     
     - name: Ensure Docker service is running
-      service:
+      ansible.builtin.service:
         name: docker
         state: started
-        enabled: yes
+        enabled: true
     
     - name: Add user to docker group
-      user:
+      ansible.builtin.user:
         name: "{{ ansible_user }}"
         groups: docker
-        append: yes
+        append: true
     
     # =========================================================================
     # Directory Setup
     # =========================================================================
     
     - name: Create installation directory
-      file:
+      ansible.builtin.file:
         path: "{{ install_dir }}"
         state: directory
         mode: '0755'
     
     - name: Create subdirectories
-      file:
+      ansible.builtin.file:
         path: "{{ install_dir }}/{{ item }}"
         state: directory
         mode: '0755'
@@ -137,49 +145,49 @@
     # =========================================================================
     
     - name: Copy Docker Compose file (single)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/docker-compose-single.yaml"
         dest: "{{ install_dir }}/docker-compose.yaml"
         mode: '0644'
       when: deployment_type == 'single'
     
     - name: Copy Docker Compose file (scalable)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/docker-compose-scalable.yaml"
         dest: "{{ install_dir }}/docker-compose.yaml"
         mode: '0644'
       when: deployment_type == 'scalable'
     
     - name: Copy OTel Collector config (single)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/otel-collector.yaml"
         dest: "{{ install_dir }}/otel-collector.yaml"
         mode: '0644'
       when: deployment_type == 'single'
     
     - name: Copy OTel Gateway config (scalable)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/otel-gateway.yaml"
         dest: "{{ install_dir }}/otel-gateway.yaml"
         mode: '0644'
       when: deployment_type == 'scalable'
     
     - name: Copy OTel Processor config (scalable)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/otel-processor.yaml"
         dest: "{{ install_dir }}/otel-processor.yaml"
         mode: '0644'
       when: deployment_type == 'scalable'
     
     - name: Copy HAProxy config (scalable)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/haproxy.cfg"
         dest: "{{ install_dir }}/haproxy.cfg"
         mode: '0644'
       when: deployment_type == 'scalable'
     
     - name: Copy storage backend configs (scalable)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/{{ item }}"
         dest: "{{ install_dir }}/{{ item }}"
         mode: '0644'
@@ -193,19 +201,19 @@
       when: deployment_type == 'scalable'
     
     - name: Copy Grafana datasources
-      copy:
+      ansible.builtin.copy:
         src: "../docker/grafana/provisioning/datasources/datasources.yaml"
         dest: "{{ install_dir }}/grafana/provisioning/datasources/datasources.yaml"
         mode: '0644'
     
     - name: Copy Grafana dashboards config
-      copy:
+      ansible.builtin.copy:
         src: "../docker/grafana/provisioning/dashboards/dashboards.yaml"
         dest: "{{ install_dir }}/grafana/provisioning/dashboards/dashboards.yaml"
         mode: '0644'
     
     - name: Copy Prometheus alerting rules (scalable)
-      copy:
+      ansible.builtin.copy:
         src: "../docker/prometheus/rules/otel-stack-alerts.yml"
         dest: "{{ install_dir }}/prometheus/rules/otel-stack-alerts.yml"
         mode: '0644'
@@ -216,7 +224,7 @@
     # =========================================================================
     
     - name: Create environment file
-      template:
+      ansible.builtin.template:
         src: templates/env.j2
         dest: "{{ install_dir }}/.env"
         mode: '0600'
@@ -226,14 +234,14 @@
     # =========================================================================
     
     - name: Pull Docker images
-      command: docker compose pull
+      ansible.builtin.command: docker compose pull
       args:
         chdir: "{{ install_dir }}"
       register: pull_result
       changed_when: "'Pulled' in pull_result.stdout or 'Downloaded' in pull_result.stdout"
     
     - name: Start observability stack
-      command: docker compose up -d
+      ansible.builtin.command: docker compose up -d
       args:
         chdir: "{{ install_dir }}"
       register: compose_result
@@ -244,7 +252,7 @@
     # =========================================================================
     
     - name: Wait for Grafana to be ready
-      uri:
+      ansible.builtin.uri:
         url: "http://localhost:3000/api/health"
         status_code: 200
       register: grafana_health
@@ -253,7 +261,7 @@
       delay: 10
     
     - name: Wait for Prometheus to be ready (scalable)
-      uri:
+      ansible.builtin.uri:
         url: "http://localhost:9090/-/healthy"
         status_code: 200
       register: prometheus_health
@@ -267,7 +275,7 @@
     # =========================================================================
     
     - name: Create systemd service for observability stack
-      copy:
+      ansible.builtin.copy:
         dest: /etc/systemd/system/observability.service
         content: |
           [Unit]
@@ -289,35 +297,35 @@
       notify: Reload systemd
     
     - name: Enable observability service
-      systemd:
+      ansible.builtin.systemd:
         name: observability
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
     
     # =========================================================================
     # Copy Operational Scripts
     # =========================================================================
     
     - name: Copy backup script
-      copy:
+      ansible.builtin.copy:
         src: "../scripts/backup.sh"
         dest: "{{ install_dir }}/backup.sh"
         mode: '0755'
     
     - name: Copy restore script
-      copy:
+      ansible.builtin.copy:
         src: "../scripts/restore.sh"
         dest: "{{ install_dir }}/restore.sh"
         mode: '0755'
     
     - name: Copy health check script
-      copy:
+      ansible.builtin.copy:
         src: "../scripts/health-check.sh"
         dest: "{{ install_dir }}/health-check.sh"
         mode: '0755'
     
     - name: Setup daily backup cron job
-      cron:
+      ansible.builtin.cron:
         name: "Observability backup"
         hour: "2"
         minute: "0"
@@ -326,8 +334,8 @@
     
   handlers:
     - name: Reload systemd
-      systemd:
-        daemon_reload: yes
+      ansible.builtin.systemd:
+        daemon_reload: true
 
 # =============================================================================
 # Post-deployment information
@@ -335,14 +343,14 @@
 
 - name: Display deployment information
   hosts: observability
-  gather_facts: no
+  gather_facts: false
   vars:
     deployment_type: "{{ deployment_type | default('single') }}"
     install_dir: /opt/observability
     grafana_admin_password: "{{ grafana_admin_password | default('admin') }}"
   tasks:
     - name: Show access information (single mode)
-      debug:
+      ansible.builtin.debug:
         msg:
           - "============================================"
           - "Observability Stack Deployed Successfully!"
@@ -366,7 +374,7 @@
       when: deployment_type == 'single'
 
     - name: Show access information (scalable mode)
-      debug:
+      ansible.builtin.debug:
         msg:
           - "============================================"
           - "Observability Stack Deployed Successfully!"
