@@ -73,11 +73,13 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+    # Note: otel-collector-contrib is distroless (no wget/curl)
+    # Health is verified externally via: curl http://<host>:13133/health
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
       start_period: 10s
     restart: unless-stopped
     stop_grace_period: 30s
@@ -165,11 +167,12 @@ services:
         reservations:
           cpus: '0.5'
           memory: 1G
+    # Note: otel-collector-contrib is distroless (no wget/curl)
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
       start_period: 15s
     restart: unless-stopped
     stop_grace_period: 60s

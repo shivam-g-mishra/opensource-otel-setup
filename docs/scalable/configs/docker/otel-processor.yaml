@@ -82,14 +82,8 @@ processors:
         probabilistic:
           sampling_percentage: 10
 
-  # Add Kubernetes metadata
-  k8sattributes:
-    extract:
-      metadata:
-        - k8s.namespace.name
-        - k8s.deployment.name
-        - k8s.pod.name
-        - k8s.node.name
+  # Note: k8sattributes processor is available for Kubernetes deployments
+  # See kubernetes/otel-processor.yaml for K8s-specific configuration
 
   resource:
     attributes:

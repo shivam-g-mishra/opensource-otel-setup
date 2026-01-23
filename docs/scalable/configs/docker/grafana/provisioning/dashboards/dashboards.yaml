@@ -2,18 +2,29 @@
 #
 # Auto-provision dashboards from files
 #
+# To add custom dashboards:
+# 1. Create JSON dashboard files in a 'json' subdirectory
+# 2. Mount the directory to /etc/grafana/provisioning/dashboards/json
+# 3. Uncomment the provider below
+#
+# Alternatively, import dashboards from Grafana.com:
+# - Tempo: https://grafana.com/grafana/dashboards/16098
+# - Mimir: https://grafana.com/grafana/dashboards/13186
+# - Loki: https://grafana.com/grafana/dashboards/13639
+# - OTel Collector: https://grafana.com/grafana/dashboards/15983
 
 apiVersion: 1
 
-providers:
-  - name: 'Observability Stack'
-    orgId: 1
-    folder: 'Observability'
-    folderUid: 'observability'
-    type: file
-    disableDeletion: false
-    updateIntervalSeconds: 30
-    allowUiUpdates: true
-    options:
-      path: /etc/grafana/provisioning/dashboards/json
-      foldersFromFilesStructure: true
+providers: []
+  # Uncomment below to enable file-based dashboard provisioning:
+  # - name: 'Observability Stack'
+  #   orgId: 1
+  #   folder: 'Observability'
+  #   folderUid: 'observability'
+  #   type: file
+  #   disableDeletion: false
+  #   updateIntervalSeconds: 30
+  #   allowUiUpdates: true
+  #   options:
+  #     path: /etc/grafana/provisioning/dashboards/json
+  #     foldersFromFilesStructure: true

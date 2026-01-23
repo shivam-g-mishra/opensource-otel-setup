@@ -37,15 +37,15 @@ data:
     
     exporters:
       kafka/traces:
-        brokers: [kafka-bootstrap.kafka.svc.cluster.local:9092]
+        brokers: [otel-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092]
         topic: otlp-traces
         encoding: otlp_proto
       kafka/metrics:
-        brokers: [kafka-bootstrap.kafka.svc.cluster.local:9092]
+        brokers: [otel-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092]
         topic: otlp-metrics
         encoding: otlp_proto
       kafka/logs:
-        brokers: [kafka-bootstrap.kafka.svc.cluster.local:9092]
+        brokers: [otel-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092]
         topic: otlp-logs
         encoding: otlp_proto
     
