@@ -2969,17 +2969,6 @@ kubectl wait kafka/otel-kafka --for=condition=Ready -n kafka --timeout=600s
 
 ---
 
-## Getting Help
-
-If you're stuck:
-
-1. **Check the logs carefully.** The answer is usually there.
-2. **Search the error message.** Someone has probably hit this before.
-3. **Check the component's GitHub issues.** Known bugs are often documented.
-4. **Ask with context.** Include logs, configuration, and what you've already tried.
-
----
-
 ## What's Next
 
 Once your stack is stable:
@@ -3133,6 +3122,13 @@ Quick reference for terms used throughout this guide:
 ---
 
 ## Getting Help
+
+If you're stuck, here's how to get unstuck:
+
+1. **Check the logs carefully.** The answer is usually there.
+2. **Search the error message.** Someone has probably hit this before.
+3. **Check the component's GitHub issues.** Known bugs are often documented.
+4. **Ask with context.** Include logs, configuration, and what you've already tried.
 
 ### Documentation
 
