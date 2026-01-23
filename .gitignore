@@ -28,3 +28,4 @@ temp/
 # Backups
 backups/
 .config-backup/
+docs/scalable/configs/terraform/.terraform/
