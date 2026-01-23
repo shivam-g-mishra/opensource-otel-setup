@@ -6,8 +6,10 @@
 
 ## Table of Contents
 
+- [Executive Summary (TL;DR)](#executive-summary-tldr)
 - [The Story Behind This Document](#the-story-behind-this-document)
 - [Who This Document Is For](#who-this-document-is-for)
+- [How to Use This Documentation](#how-to-use-this-documentation)
 - [Document Structure](#document-structure)
 
 ### Part I: The Foundation
@@ -67,6 +69,54 @@
 - [Evolution Path: Start Simple, Scale When Needed](#evolution-path-start-simple-scale-when-needed)
 - [Final Thoughts](#final-thoughts)
 - [Quick Reference](#quick-reference)
+  - [Architecture Summary](#architecture-summary-one-sentence-per-layer)
+  - [Capacity Guidelines](#capacity-guidelines)
+  - [Quick Decision Matrix](#quick-decision-matrix)
+  - [Technology Selection Cheat Sheet](#technology-selection-cheat-sheet)
+  - [Port Reference](#port-reference)
+  - [Key Metrics to Monitor](#key-metrics-to-monitor-the-stack-itself)
+  - [Glossary](#glossary)
+
+---
+
+## Executive Summary (TL;DR)
+
+For busy architects and decision-makers, here are the key points:
+
+**The Problem:**
+- Commercial observability platforms (Datadog, Splunk, etc.) cost $200K-$1.5M+/year at enterprise scale
+- For 5,000+ hosts, we faced a $1.5M annual bill—untenable for many organizations
+
+**The Solution:**
+- Self-hosted observability using OpenTelemetry + open-source backends
+- Same capabilities (traces, metrics, logs, correlation) at 75-90% lower cost
+- Complete data ownership and unlimited customization
+
+**The Architecture:**
+```
+Apps → OTel Collector → Kafka → Processing → Storage → Grafana
+       (gateway)       (buffer)  (sample)    (Tempo/Mimir/Loki)
+```
+
+**The Numbers:**
+
+| Scale | Self-Hosted Cost | Commercial Cost | Savings |
+|-------|-----------------|-----------------|---------|
+| Small (500 hosts) | ~$300/month | ~$25K/month | 99% |
+| Medium (2K hosts) | ~$2K/month | ~$80K/month | 97% |
+| Enterprise (5K+ hosts) | ~$15K/month | ~$150K/month | 90% |
+
+**The Trade-off:**
+- Requires 0.5-1.0 FTE for operations
+- Your team needs Kafka, Prometheus, and Kubernetes skills
+- 2-4 weeks initial setup vs. hours for commercial solutions
+
+**The Recommendation:**
+- Start with Phase 1 (single-node) unless you have specific scale requirements
+- Most teams can run Phase 1 in production for years
+- Scale to Phase 2/3 only when you hit concrete limitations
+
+> **Bottom Line:** If you have infrastructure expertise and observability costs are a concern, self-hosting can save $200K-$1M+ annually while providing complete control over your data.
 
 ---
 
@@ -116,6 +166,28 @@ This guide is written for **senior developers, platform engineers, and architect
 
 If you're looking for a fully-managed, zero-maintenance solution and budget isn't a constraint, this probably isn't for you. But if you're willing to invest some engineering effort in exchange for dramatically lower costs and complete control over your observability data, read on.
 
+### How Architects and Tech Leads Should Use This Document
+
+**For architecture reviews and technical proposals:**
+- Use the [Cost Analysis](#cost-analysis-what-will-this-actually-cost) section to build business cases
+- Reference the [Technology Selection Rationale](#technology-selection-rationale) for design decision documentation
+- Cite the [Trade-Offs We Accept](#the-trade-offs-we-accept) section for honest risk assessment
+
+**For team onboarding:**
+- Start new engineers with [Part I: The Foundation](#part-i-the-foundation) to build shared vocabulary
+- Use [The Three Pillars](#the-three-pillars-a-practical-explanation) to align on observability concepts
+- Walk through [How Data Actually Flows](#how-data-actually-flows) to establish mental models
+
+**For capacity planning:**
+- Reference [Capacity Guidelines](#capacity-guidelines) in the Quick Reference
+- Use [Evolution Path](#evolution-path-start-simple-scale-when-needed) to plan growth phases
+- Check [Enterprise-Scale Deployment](#enterprise-scale-deployment-5000-hosts) for large-scale projections
+
+**For incident response and troubleshooting:**
+- Review [Common Mistakes to Avoid](#common-mistakes-to-avoid) proactively
+- Understand [The Incidents You'll Face](#the-incidents-youll-face) for runbook preparation
+- Use the [Implementation Guide's Troubleshooting section](./implementation-guide.md#troubleshooting) for hands-on debugging
+
 ---
 
 ## Document Structure
@@ -129,7 +201,69 @@ This document is organized as a journey from understanding the problem to design
 | **Part III: The Scalable Architecture** | The multi-tier design that handles high volume, provides high availability, and grows with your needs |
 | **Part IV: Making Decisions** | Technology choices, trade-offs we've accepted, and how to think about costs |
 
-When you're ready to actually build this, head to the [Implementation Guide](./implementation-guide.md) for step-by-step instructions.
+---
+
+## How to Use This Documentation
+
+This architecture document is part of a two-document set designed to take you from understanding to implementation:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        YOUR LEARNING PATH                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────────────────┐         ┌──────────────────────┐              │
+│  │   ARCHITECTURE.MD    │         │ IMPLEMENTATION-GUIDE │              │
+│  │   (This Document)    │         │       .MD            │              │
+│  │                      │         │                      │              │
+│  │  • WHY we build it   │   ───►  │  • HOW to build it   │              │
+│  │  • Design decisions  │         │  • Step-by-step      │              │
+│  │  • Trade-offs        │         │  • Config files      │              │
+│  │  • Cost analysis     │         │  • Troubleshooting   │              │
+│  └──────────────────────┘         └──────────────────────┘              │
+│                                                                          │
+│  Read architecture FIRST if you need to:                                │
+│  • Justify the approach to stakeholders                                 │
+│  • Understand why components were chosen                                │
+│  • Make customization decisions                                         │
+│  • Plan for future scaling                                              │
+│                                                                          │
+│  Jump to implementation FIRST if you:                                   │
+│  • Already understand observability concepts                            │
+│  • Just need to get something running quickly                           │
+│  • Trust the architecture decisions and want to execute                 │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Quick Decision: Which Phase Should You Start With?
+
+Use this decision tree to find your starting point:
+
+```
+                        ┌─────────────────────────┐
+                        │ What's your situation?  │
+                        └───────────┬─────────────┘
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              │                     │                     │
+              ▼                     ▼                     ▼
+    ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+    │ Learning/Dev    │   │ Production      │   │ Kubernetes org  │
+    │ <10K events/sec │   │ needs HA        │   │ or >100K eps    │
+    │ Small team      │   │ 10K-100K eps    │   │                 │
+    └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
+             │                     │                     │
+             ▼                     ▼                     ▼
+    ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+    │    PHASE 1      │   │    PHASE 2      │   │    PHASE 3      │
+    │  Single Node    │   │  Multi-Node     │   │   Kubernetes    │
+    │  ~$200/month    │   │  + Kafka        │   │   + Auto-scale  │
+    │                 │   │  ~$1,500/month  │   │   Variable      │
+    └─────────────────┘   └─────────────────┘   └─────────────────┘
+```
+
+When you're ready to build, head to the [Implementation Guide](./implementation-guide.md) for step-by-step instructions.
 
 ---
 
@@ -1862,6 +1996,27 @@ For those times when you just need to look something up quickly, here are the ke
 | Large | 50K-200K | Kubernetes | $2,000-8,000 |
 | Enterprise | >200K | Multi-cluster | $8,000+ |
 
+### Quick Decision Matrix
+
+Use this to quickly determine your recommended setup:
+
+| If you need... | Recommended Phase | Key Components |
+|----------------|-------------------|----------------|
+| Basic observability, learning | Phase 1 | Docker Compose, Jaeger, Prometheus |
+| Production for small team (<50K eps) | Phase 1 | Same, with backups configured |
+| High availability, zero data loss | Phase 2 | Add Kafka, switch to Tempo/Mimir |
+| Auto-scaling, GitOps | Phase 3 | Kubernetes, HPA, Strimzi |
+| AWS-native, IRSA auth | Phase 4 | Terraform + Phase 3 |
+
+### Technology Selection Cheat Sheet
+
+| Signal | Phase 1 | Phase 2+ | Why Change? |
+|--------|---------|----------|-------------|
+| **Traces** | Jaeger | Tempo | Object storage is cheaper at scale |
+| **Metrics** | Prometheus | Mimir | Horizontal scaling, unlimited retention |
+| **Logs** | Loki | Loki | Already scales well |
+| **Buffer** | Collector queues | Kafka | 24h durability, replay capability |
+
 ### Port Reference
 
 | Service | Port | Protocol | Purpose |
@@ -1874,6 +2029,44 @@ For those times when you just need to look something up quickly, here are the ke
 | Loki | 3100 | HTTP | API |
 | Grafana | 3000 | HTTP | UI |
 | Kafka | 9092 | TCP | Client connections |
+
+### Key Metrics to Monitor (The Stack Itself)
+
+```promql
+# Is the collector healthy?
+otelcol_processor_memory_limiter_refused_spans > 0  # Memory pressure!
+
+# Is data flowing?
+rate(otelcol_receiver_accepted_spans[5m])  # Ingestion rate
+rate(otelcol_exporter_sent_spans[5m])      # Export rate
+
+# Is the queue backing up?
+otelcol_exporter_queue_size / otelcol_exporter_queue_capacity > 0.8  # Alert!
+
+# Backend health
+tempo_distributor_ingester_appends_total  # Tempo receiving
+mimir_distributor_received_samples_total  # Mimir receiving
+loki_distributor_lines_received_total     # Loki receiving
+```
+
+### Glossary
+
+| Term | Definition |
+|------|------------|
+| **OTLP** | OpenTelemetry Protocol — The native protocol for sending telemetry data to collectors |
+| **Span** | A single unit of work in a trace (e.g., one HTTP request, one database query) |
+| **Trace** | A collection of spans representing a complete request path through your system |
+| **Cardinality** | The number of unique combinations of label values; high cardinality = expensive |
+| **Tail Sampling** | Deciding whether to keep a trace after it completes (vs head sampling at the start) |
+| **Consumer Lag** | How far behind Kafka consumers are from the latest messages; indicates processing backlog |
+| **eps** | Events per second — A common measure of telemetry throughput |
+| **PromQL** | Prometheus Query Language — Used to query metrics from Prometheus/Mimir |
+| **TraceQL** | Tempo's query language for searching traces |
+| **LogQL** | Loki's query language for searching logs |
+| **IRSA** | IAM Roles for Service Accounts — AWS feature for credential-free pod authentication |
+| **HPA** | Horizontal Pod Autoscaler — Kubernetes feature for automatic scaling based on metrics |
+| **PDB** | Pod Disruption Budget — Kubernetes feature to ensure minimum availability during maintenance |
+| **Remote Write** | Protocol for pushing metrics to a remote storage (vs scraping) |
 
 ### Related Documents
 

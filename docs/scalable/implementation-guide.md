@@ -200,6 +200,26 @@ docs/scalable/
 
 ---
 
+## How This Guide Relates to the Architecture Document
+
+This implementation guide is the **practical companion** to the [Architecture Overview](./architecture.md). Here's how they work together:
+
+| Question | Where to Find the Answer |
+|----------|--------------------------|
+| "Why did we choose Tempo over Jaeger?" | [Architecture: Technology Selection](./architecture.md#technology-selection-rationale) |
+| "How do I configure the OTel Collector?" | Implementation Guide (this document) |
+| "What are the trade-offs of self-hosting?" | [Architecture: The Real Human Cost](./architecture.md#the-real-human-cost-what-youre-signing-up-for) |
+| "How do I deploy on Kubernetes?" | Implementation Guide (this document) |
+| "What will this actually cost?" | [Architecture: Cost Analysis](./architecture.md#cost-analysis-what-will-this-actually-cost) |
+| "How do I troubleshoot issues?" | Implementation Guide (this document) |
+
+**If you haven't read the Architecture document**, we recommend at least skimming these sections before implementing:
+- [Why Observability Matters](./architecture.md#why-observability-actually-matters) — Understand the problem we're solving
+- [The Five-Layer Architecture](./architecture.md#the-five-layer-architecture) — Understand how components fit together
+- [Common Mistakes to Avoid](./architecture.md#common-mistakes-to-avoid) — Save yourself from painful lessons
+
+---
+
 ## What We're Building
 
 By the end of this guide, you'll have:
@@ -235,6 +255,70 @@ Let me be specific about what you need:
 - About 4 hours
 
 Don't worry if you're not planning to go beyond Phase 1 right now. You can always come back to later phases when needed.
+
+### Verify Your Prerequisites
+
+Before you start, run these commands to confirm your environment is ready:
+
+**Phase 1 Prerequisites Check:**
+```bash
+# Check Docker version (need 20.10+)
+docker --version
+# Expected: Docker version 20.10.x or higher
+
+# Check Docker Compose V2
+docker compose version
+# Expected: Docker Compose version v2.x.x
+
+# Check available memory (need 8GB+)
+free -h
+# Look for "Mem:" row, "total" column
+
+# Check available disk space (need 50GB+)
+df -h /
+# Look at "Avail" column
+
+# Verify Docker is running
+docker info > /dev/null 2>&1 && echo "Docker is running" || echo "Docker is NOT running"
+
+# Verify you can run containers
+docker run --rm hello-world
+```
+
+**Phase 2 Additional Checks:**
+```bash
+# Check memory (need 16GB+)
+free -h
+
+# Check disk space (need 200GB+)
+df -h /
+
+# Verify ports are available
+for port in 4317 4318 3000 9090 9092 3100 3200 9009 8404; do
+  (echo >/dev/tcp/localhost/$port) 2>/dev/null && echo "Port $port is IN USE" || echo "Port $port is available"
+done
+```
+
+**Phase 3 Additional Checks:**
+```bash
+# Check kubectl is configured
+kubectl version --client
+# Expected: Client Version: v1.24.x or higher
+
+# Check cluster connectivity
+kubectl cluster-info
+# Should show cluster endpoint
+
+# Check you have necessary permissions
+kubectl auth can-i create deployments
+# Expected: yes
+
+# Check storage class exists
+kubectl get storageclass
+# Should show at least one storage class
+```
+
+> **Common Issue:** If Docker commands require `sudo`, add your user to the docker group: `sudo usermod -aG docker $USER` then log out and back in.
 
 ---
 
@@ -1500,18 +1584,44 @@ For detailed integration guides, see the language-specific documentation in the 
 
 ## Phase 1 Complete
 
-At this point, you have a fully functional observability stack. Before moving to Phase 2, make sure:
+At this point, you have a fully functional observability stack.
 
-- [ ] All services show "healthy"
-- [ ] You can access Grafana and see data sources
-- [ ] Test telemetry appears in Jaeger
-- [ ] The backup script runs successfully
-- [ ] Your applications are sending real telemetry
+### Verification Checklist
 
-**You can stop here.** Phase 1 is production-ready for many teams. Only move to Phase 2 when you:
-- Need to handle more than 50,000 events per second
-- Require high availability (can't afford observability downtime)
-- Need to do maintenance on backends without losing data
+Before moving to Phase 2 (or staying on Phase 1 for production), verify everything works:
+
+**Core Functionality:**
+- [ ] All services show "healthy" in `docker compose ps`
+- [ ] Health check script passes: `./scripts/health-check.sh`
+- [ ] Grafana accessible at http://localhost:3000
+- [ ] All three data sources configured in Grafana (Prometheus, Jaeger, Loki)
+- [ ] Test telemetry appears in Jaeger UI
+
+**Reliability:**
+- [ ] Backup script completes: `./scripts/backup.sh`
+- [ ] Services auto-recover after restart: `docker compose restart`
+- [ ] Collector queues data when backend is down (stop Jaeger, send data, start Jaeger, verify data arrives)
+
+**Integration:**
+- [ ] At least one real application sending telemetry
+- [ ] Traces visible for your application in Jaeger
+- [ ] Metrics queryable in Prometheus
+
+### Should You Move to Phase 2?
+
+**Stay on Phase 1 if:**
+- Your throughput is comfortably under 30,000 events/second
+- Brief observability gaps (< 1 hour) during maintenance are acceptable
+- Your team has limited infrastructure bandwidth
+- You're in a single region/datacenter
+
+**Move to Phase 2 if:**
+- You're regularly hitting 40,000+ events/second
+- You need zero data loss during backend maintenance
+- High availability is a requirement (SLA expectations)
+- You're seeing performance issues during peak load
+
+> **Key Insight:** Many teams successfully run Phase 1 in production for years. Don't scale prematurely—the added complexity of Kafka and multiple collectors requires ongoing operational attention. See [The Real Human Cost](./architecture.md#the-real-human-cost-what-youre-signing-up-for) in the architecture document for an honest assessment.
 
 ---
 
@@ -1849,20 +1959,57 @@ Key metrics to watch:
 
 ## Phase 2 Complete
 
-You now have a scalable, highly-available observability stack:
+You now have a scalable, highly-available observability stack.
 
-- ✅ Multiple gateways behind load balancer
-- ✅ Kafka buffer for durability
-- ✅ Multiple processors with tail sampling
-- ✅ Scalable storage backends (Tempo, Mimir, Loki)
-- ✅ Stack self-monitoring with Prometheus
-- ✅ Unified visualization in Grafana
+### Verification Checklist
 
-**Move to Phase 3 (Kubernetes) when:**
+**Core Functionality:**
+- [ ] All containers healthy: `docker compose -f docker-compose-scalable.yaml ps`
+- [ ] HAProxy stats show all backends UP: http://localhost:8404/stats
+- [ ] Kafka topics exist: `otlp-traces`, `otlp-metrics`, `otlp-logs`
+- [ ] Test data flows through to Tempo (check Grafana → Explore → Tempo)
+- [ ] Metrics appear in Mimir (check via Prometheus datasource in Grafana)
+
+**High Availability:**
+- [ ] Stop one gateway, verify traffic routes to others
+- [ ] Stop one processor, verify data still processed (from remaining processors)
+- [ ] Stop Tempo briefly, verify data queues in Kafka and arrives after restart
+
+**Scaling:**
+- [ ] Successfully scaled gateways: `--scale otel-gateway=3`
+- [ ] Successfully scaled processors: `--scale otel-processor=3`
+- [ ] Consumer lag stays low after scaling (check Kafka consumer groups)
+
+**Monitoring:**
+- [ ] Prometheus scraping all components
+- [ ] Collector metrics visible (queue size, send success/failure)
+
+### Key Capabilities You Now Have
+
+| Capability | Phase 1 | Phase 2 |
+|------------|---------|---------|
+| Throughput | ~50K eps | ~200K eps (scalable) |
+| Data durability | Collector queues (limited) | Kafka (24h buffer) |
+| Backend maintenance | Brief data gap | Zero data loss |
+| Horizontal scaling | ❌ | ✅ Gateways & Processors |
+| Trace storage cost | Higher (Jaeger+Badger) | Lower (Tempo+S3) |
+
+### Should You Move to Phase 3?
+
+**Stay on Phase 2 (Docker) if:**
+- Your organization doesn't use Kubernetes
+- VM-based deployment works for your team
+- You have a handful of well-known servers
+- Manual scaling with `--scale` is sufficient
+
+**Move to Phase 3 (Kubernetes) if:**
 - Your organization has standardized on Kubernetes
-- You need GitOps workflows
-- You want auto-scaling based on metrics
-- You're running in multiple regions
+- You want auto-scaling based on actual CPU/memory metrics
+- GitOps workflows are important to your team
+- You need multi-region deployment
+- You're running in a cloud environment with managed Kubernetes
+
+> **Transition Tip:** Phase 2 and Phase 3 use the same logical architecture—the difference is orchestration. Your understanding of gateways, Kafka, processors, and storage backends transfers directly.
 
 ---
 
@@ -2202,14 +2349,59 @@ env:
 
 ## Phase 3 Complete
 
-You now have a production-ready Kubernetes deployment:
+You now have a production-ready Kubernetes deployment.
 
-- ✅ Auto-scaling collectors (HPA)
-- ✅ High availability with PDBs
-- ✅ Object storage backend (MinIO/S3)
-- ✅ Kafka for durable buffering (Strimzi)
-- ✅ Stack self-monitoring
-- ✅ Ingress for external access
+### Verification Checklist
+
+**Core Infrastructure:**
+- [ ] Namespace exists: `kubectl get ns observability`
+- [ ] All pods running: `kubectl get pods -n observability` (all show `Running`, `1/1 Ready`)
+- [ ] Kafka cluster ready: `kubectl get kafka -n kafka` (shows `Ready`)
+- [ ] MinIO accessible: `kubectl logs minio-0 -n minio` (no errors)
+
+**Storage Backends:**
+- [ ] Tempo pod running and connected to S3: `kubectl logs tempo-0 -n observability | grep -i "s3\|bucket"`
+- [ ] Mimir pod running and connected to S3: `kubectl logs mimir-0 -n observability | grep -i "s3\|bucket"`
+- [ ] Loki pod running and connected to S3: `kubectl logs loki-0 -n observability | grep -i "s3\|bucket"`
+
+**Data Pipeline:**
+- [ ] Gateway pods receiving data: Check collector metrics
+- [ ] Processor pods consuming from Kafka: Check consumer lag
+- [ ] Test trace visible in Grafana via Tempo datasource
+
+**Auto-Scaling:**
+- [ ] HPA configured: `kubectl get hpa -n observability`
+- [ ] PDB configured: `kubectl get pdb -n observability`
+- [ ] Gateway HPA targets set correctly (CPU 70%)
+- [ ] Processor HPA targets set correctly (CPU 70%)
+
+**External Access:**
+- [ ] Grafana ingress configured: `kubectl get ingress -n observability`
+- [ ] OTel gateway service accessible (ClusterIP or LoadBalancer as needed)
+
+### Key Kubernetes-Specific Capabilities
+
+| Feature | Docker Compose | Kubernetes |
+|---------|---------------|------------|
+| Auto-scaling | Manual `--scale` | HPA (automatic) |
+| Self-healing | `restart: unless-stopped` | Pod restart + rescheduling |
+| Config management | File mounts | ConfigMaps + Secrets |
+| Secret handling | Environment variables | Kubernetes Secrets + IRSA |
+| Rolling updates | Manual | `kubectl rollout` |
+| Resource guarantees | `deploy.resources` | Requests + Limits + QoS |
+
+### Should You Move to Phase 4?
+
+**Use MinIO (current setup) if:**
+- On-premises deployment
+- Want to avoid cloud vendor lock-in
+- Cost is primary concern and you manage your own storage
+
+**Move to Phase 4 (AWS S3 + Terraform) if:**
+- Running on AWS
+- Want managed object storage (11 nines durability)
+- Infrastructure-as-code is a requirement
+- Using IRSA for credential-free authentication
 
 ---
 
@@ -2334,6 +2526,36 @@ kubectl apply -f grafana.yaml
 kubectl apply -f otel-gateway.yaml
 kubectl apply -f otel-processor.yaml
 ```
+
+## Phase 4 Verification Checklist
+
+After Terraform and Kubernetes deployment completes:
+
+**AWS Infrastructure:**
+- [ ] VPC created with public/private subnets
+- [ ] EKS cluster accessible: `kubectl cluster-info`
+- [ ] S3 bucket created with appropriate lifecycle policies
+- [ ] IAM IRSA role created and annotated on service accounts
+
+**S3 Integration:**
+- [ ] Tempo writing to S3: `aws s3 ls s3://your-bucket/tempo/`
+- [ ] Mimir writing to S3: `aws s3 ls s3://your-bucket/mimir/`
+- [ ] Loki writing to S3: `aws s3 ls s3://your-bucket/loki/`
+
+**Cost Optimization:**
+- [ ] S3 lifecycle policy configured (transition to IA after 30 days)
+- [ ] Node groups right-sized for workload
+- [ ] Spot instances considered for non-critical workloads
+
+### Benefits of AWS S3 vs MinIO
+
+| Aspect | MinIO (Self-Managed) | AWS S3 |
+|--------|---------------------|--------|
+| Durability | Depends on your setup | 99.999999999% (11 nines) |
+| Availability | Depends on your setup | 99.99% |
+| Operations | You manage | AWS manages |
+| Cost | Hardware + power + ops | Pay-per-use (~$0.023/GB) |
+| IRSA Integration | Not applicable | Credential-free pods |
 
 ---
 
@@ -2884,3 +3106,65 @@ OTEL_TRACES_SAMPLER_ARG=0.1  # 10% sampling
 | **VM automation** | Ansible | `ansible/playbook.yml` |
 
 **Remember:** Start simple, scale when needed. Most teams run Phase 1 successfully for years.
+
+---
+
+## Glossary
+
+Quick reference for terms used throughout this guide:
+
+| Term | Definition |
+|------|------------|
+| **OTLP** | OpenTelemetry Protocol — The standard protocol for sending telemetry |
+| **gRPC** | Google's high-performance RPC framework (port 4317) |
+| **Span** | A single operation in a trace (e.g., one API call) |
+| **Trace ID** | Unique identifier linking all spans in a request |
+| **Collector** | OTel component that receives, processes, and exports telemetry |
+| **Gateway** | Collector in receive-only mode (Phase 2+) |
+| **Processor** | Collector that consumes from Kafka and exports to backends (Phase 2+) |
+| **Backend** | Storage system (Jaeger, Tempo, Prometheus, Mimir, Loki) |
+| **Consumer Lag** | How far behind Kafka consumers are; indicates backlog |
+| **HPA** | Horizontal Pod Autoscaler (Kubernetes auto-scaling) |
+| **PDB** | Pod Disruption Budget (Kubernetes availability guarantee) |
+| **IRSA** | IAM Roles for Service Accounts (AWS credential-free auth) |
+| **ConfigMap** | Kubernetes resource for storing configuration |
+| **Init Container** | Container that runs before the main container (used for config rendering) |
+
+---
+
+## Getting Help
+
+### Documentation
+
+- **Architecture decisions**: [Architecture Overview](./architecture.md)
+- **Configuration reference**: [Config Files](./configs/)
+- **OpenTelemetry docs**: https://opentelemetry.io/docs/
+- **Grafana docs**: https://grafana.com/docs/
+
+### Community Resources
+
+- **OpenTelemetry Slack**: https://cloud-native.slack.com (#opentelemetry)
+- **Grafana Community**: https://community.grafana.com/
+- **GitHub Issues**: Report issues in this repository
+
+### When Asking for Help
+
+Include this information to get faster answers:
+
+```bash
+# Collect diagnostic information
+echo "=== Docker Version ===" && docker --version
+echo "=== Compose Version ===" && docker compose version
+echo "=== Container Status ===" && docker compose ps
+echo "=== Recent Logs ===" && docker compose logs --tail=50 2>&1 | grep -i error
+echo "=== Resource Usage ===" && docker stats --no-stream
+echo "=== Disk Space ===" && df -h
+```
+
+For Kubernetes:
+```bash
+kubectl version --short
+kubectl get pods -n observability
+kubectl describe pod <failing-pod> -n observability
+kubectl logs <failing-pod> -n observability --tail=50
+```
